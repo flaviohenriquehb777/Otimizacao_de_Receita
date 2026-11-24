@@ -40,5 +40,8 @@ Thumbs.db
 # DVC local config (keep secrets local)
 .dvc/config.local
 
+# Dossiê interno (contém marca/PII real): manter apenas local.
+references/
+
 # Node/npm (if any dev tooling)
 node_modules/
