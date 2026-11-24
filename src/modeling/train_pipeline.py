@@ -74,6 +74,18 @@ class ModelSpec:
     params: dict
 
 
+_PROJECT_SLUG = "Otimizacao_de_Receita"
+
+
+def _belongs_to_this_project(uri: str | None) -> bool:
+    """Verifica se um tracking URI remoto pertence comprovadamente a este projeto.
+
+    Guarda "fail-closed": impede contaminar o MLflow de outro projeto
+    (ex.: Auto-Insurance-Fraud) por causa de variáveis de ambiente globais.
+    """
+    return _PROJECT_SLUG.lower() in (uri or "").lower()
+
+
 def init_tracking():
     """Inicializa MLflow e opcionalmente DagsHub, lendo variáveis de ambiente.
 
@@ -81,6 +93,10 @@ def init_tracking():
     - DAGSHUB_REPO_OWNER / DAGSHUB_REPO_NAME
     - DAGSHUB_OWNER / DAGSHUB_REPO
     E MLFLOW_TRACKING_URI explícito quando fornecido.
+
+    Segurança: só escreve em MLflow remoto se o alvo pertencer comprovadamente
+    a este projeto. Caso contrário (ex.: MLFLOW_TRACKING_URI global apontando
+    para outro repositório), cai para tracking local em ``mlruns/``.
     """
     # Primeiro, configurar tracking URI (somente se houver credenciais); caso contrário, usar tracking local
     owner = os.getenv("DAGSHUB_REPO_OWNER") or os.getenv("DAGSHUB_OWNER")
@@ -102,7 +118,20 @@ def init_tracking():
             warnings.warn(f"Falha ao definir tracking local do MLflow: {e_local}")
             return False
 
-    if has_credentials:
+    # Fail-closed: só aceita remoto se, comprovadamente, for deste projeto.
+    remote_uri: str | None = None
+    if tracking_uri_env and _belongs_to_this_project(tracking_uri_env):
+        remote_uri = tracking_uri_env
+    elif owner and repo and _belongs_to_this_project(repo):
+        remote_uri = f"https://dagshub.com/{owner}/{repo}.mlflow"
+    elif tracking_uri_env:
+        warnings.warn(
+            "MLFLOW_TRACKING_URI aponta para outro projeto "
+            f"('{tracking_uri_env}'); ignorado para não contaminar o MLflow "
+            "de outro repositório. Usando tracking local em mlruns/."
+        )
+
+    if remote_uri and has_credentials:
         if not username and owner:
             username = owner
         # Garantir que MLflow leia credenciais via env
@@ -113,12 +142,8 @@ def init_tracking():
         if token_env:
             os.environ.setdefault("MLFLOW_TRACKING_TOKEN", token_env)
 
-        # Definir URI remoto (env explícito tem prioridade; senão, montar via owner/repo)
         try:
-            if tracking_uri_env:
-                mlflow.set_tracking_uri(tracking_uri_env)
-            elif owner and repo:
-                mlflow.set_tracking_uri(f"https://dagshub.com/{owner}/{repo}.mlflow")
+            mlflow.set_tracking_uri(remote_uri)
             # Inicialização explícita do DagsHub quando em CI ou quando habilitado
             try:
                 import dagshub  # type: ignore
@@ -130,7 +155,7 @@ def init_tracking():
             warnings.warn(f"Falha ao definir tracking remoto do MLflow: {e_uri}. Alternando para tracking local.")
             set_local_tracking()
     else:
-        # Fallback robusto: tracking local em arquivo, evitando 401/403 em ambientes sem credenciais
+        # Fallback robusto: tracking local em arquivo, evitando 401/403 (e contaminação)
         set_local_tracking()
 
     exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "max_receita_cafeterias")
