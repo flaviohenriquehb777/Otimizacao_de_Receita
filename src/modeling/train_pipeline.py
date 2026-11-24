@@ -64,7 +64,7 @@ try:
 except Exception:
     dagshub = None
 
-from src.config.paths import DADOS_AMOR_A_CAKES, MODELS_DIR, PROJECT_ROOT
+from src.config.paths import MODELS_DIR, PROJECT_ROOT, caminho_dataset
 
 
 @dataclass
@@ -181,11 +181,16 @@ def init_tracking():
 
 def load_dataset() -> pd.DataFrame:
     """
-    Carrega o dataset principal; se não existir (CI/ambiente limpo), gera um dataset sintético
-    determinístico para permitir treino e testes estáveis.
+    Carrega o dataset principal (Parquet canônico ou XLSX legado); se não existir
+    (CI/ambiente limpo), gera um dataset sintético determinístico para permitir
+    treino e testes estáveis.
     """
-    if DADOS_AMOR_A_CAKES.exists():
-        df = pd.read_excel(DADOS_AMOR_A_CAKES)
+    caminho = caminho_dataset()
+    if caminho.exists():
+        if caminho.suffix == ".parquet":
+            df = pd.read_parquet(caminho)
+        else:
+            df = pd.read_excel(caminho)
     else:
         rng = np.random.default_rng(42)
         n = 600

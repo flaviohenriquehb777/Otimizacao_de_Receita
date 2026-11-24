@@ -34,9 +34,18 @@ for _dir in (DATA_DIR, MODELS_DIR, REPORTS_DIR):
 
 # --- Datasets (dados crus e tratados) ---------------------------------------
 # Nomes de-identificados; o dono real da base é mantido fora do repositório
-# público. Ver Fase 1 do plano para o pipeline de dados em Parquet + DVC.
+# público. O dataset canônico é gerado em Parquet e versionado via DVC.
+DADOS_CAFETERIAS_PARQUET = DATA_DIR / "dataset_cafeterias_rj.parquet"
+DADOS_CAFETERIAS_PREPARADO = DATA_DIR / "dataset_cafeterias_rj_preparado.parquet"
 DADOS_AMOR_A_CAKES = DATA_DIR / "dataset_cafeterias_rj.xlsx"
 DADOS_AMOR_A_CAKES_TRATADOS = DATA_DIR / "dataset_cafeterias_rj_limpo.xlsx"
+
+
+def caminho_dataset() -> Path:
+    """Retorna o dataset preferido: Parquet (DVC) e, na ausência, o XLSX legado."""
+    if DADOS_CAFETERIAS_PARQUET.exists():
+        return DADOS_CAFETERIAS_PARQUET
+    return DADOS_AMOR_A_CAKES
 
 
 def dataset_exists(caminho: Path | None = None) -> bool:
@@ -45,4 +54,4 @@ def dataset_exists(caminho: Path | None = None) -> bool:
     Evita quebrar import em ambientes CI; o pipeline decide o fallback
     para dados sintéticos quando o arquivo estiver ausente.
     """
-    return (caminho or DADOS_AMOR_A_CAKES).exists()
+    return (caminho or caminho_dataset()).exists()

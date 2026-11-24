@@ -20,10 +20,9 @@ htmlcov/
 # MLflow local runs
 mlruns/
 
-# Models and artifacts (kept out of VCS; CI/DagsHub will track)
-models/*.pkl
-models/*.joblib
-models/shap_summary.png
+# Artefatos de modelo: governança exclusiva via DVC (nunca versionar no Git).
+models/*
+!models/.gitkeep
 
 # Reports and schedules (do not version)
 report/
@@ -40,6 +39,9 @@ Thumbs.db
 
 # DVC local config (keep secrets local)
 .dvc/config.local
+
+# Dossiê interno (contém marca/PII real): manter apenas local.
+references/
 
 # Node/npm (if any dev tooling)
 node_modules/

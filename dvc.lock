@@ -1,0 +1,78 @@
+schema: '2.0'
+stages:
+  gerar_dados:
+    cmd: python -m src.data.gerar_dataset
+    deps:
+    - path: src/config/paths.py
+      hash: md5
+      md5: 95c523a1bab4fe449e2a49dd5d921ebc
+      size: 2033
+    - path: src/data/gerar_dataset.py
+      hash: md5
+      md5: fd6d575eb4a8af85c31a859c8c907963
+      size: 16578
+    outs:
+    - path: dados/dataset_cafeterias_rj.parquet
+      hash: md5
+      md5: 8729e903fffff331767602d42a497903
+      size: 1196962
+  train:
+    cmd: python -m src.modeling.train_pipeline
+    deps:
+    - path: dados/dataset_cafeterias_rj.parquet
+      hash: md5
+      md5: 8729e903fffff331767602d42a497903
+      size: 1196962
+    - path: src/config/paths.py
+      hash: md5
+      md5: 95c523a1bab4fe449e2a49dd5d921ebc
+      size: 2033
+    - path: src/modeling/train_pipeline.py
+      hash: md5
+      md5: 7f29c034956853a129d27aeb9df0cf3b
+      size: 28851
+    outs:
+    - path: models/best_model_max_receita.pkl
+      hash: md5
+      md5: 8990cd7af72798f34f9ec015afbb2611
+      size: 920
+    - path: models/curve_business_metric.csv
+      hash: md5
+      md5: d381345bafc6181539ace404d9462bb1
+      size: 2650
+    - path: models/metrics_snapshot.json
+      hash: md5
+      md5: 345cab0c76dc677b965168a8ccc38082
+      size: 857
+    - path: models/model_best.onnx
+      hash: md5
+      md5: 7b3d64808968823f6af55d09cb9be1b3
+      size: 286
+    - path: models/model_best_meta.json
+      hash: md5
+      md5: d737cd259e08fa8f1cf1bcd7858bc386
+      size: 177
+    - path: models/model_linear.json
+      hash: md5
+      md5: c506255c34fb1ec2f62354c75576ddb3
+      size: 625
+  preparar_dados:
+    cmd: python -m src.data.preparar_dataset
+    deps:
+    - path: dados/dataset_cafeterias_rj.parquet
+      hash: md5
+      md5: 8729e903fffff331767602d42a497903
+      size: 1196962
+    - path: src/config/paths.py
+      hash: md5
+      md5: 95c523a1bab4fe449e2a49dd5d921ebc
+      size: 2033
+    - path: src/data/preparar_dataset.py
+      hash: md5
+      md5: 3297ac53966d024db7aa84a328cf075e
+      size: 12120
+    outs:
+    - path: dados/dataset_cafeterias_rj_preparado.parquet
+      hash: md5
+      md5: ec43806dde82e054473490b5d520215b
+      size: 1453958
