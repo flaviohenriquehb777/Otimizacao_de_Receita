@@ -1,43 +1,48 @@
+"""Caminhos canônicos do projeto — fonte única de verdade.
+
+Todos os módulos e notebooks devem importar daqui em vez de montar
+caminhos relativos manualmente.
+"""
+
+from __future__ import annotations
+
 from pathlib import Path
-import sys
+
+_MARCADORES = (".git", "pyproject.toml", "src")
+
 
 def get_project_root() -> Path:
-    """Retorna a raiz do projeto baseado em marcadores."""
+    """Retorna a raiz do projeto subindo até encontrar um marcador conhecido."""
     current = Path(__file__).resolve()
-    while not any((current / marker).exists() for marker in [".git", "src", "dados"]):
-        if current.parent == current:
-            raise RuntimeError("Raiz do projeto não encontrada.")
-        current = current.parent
-    return current
+    for candidate in (current, *current.parents):
+        if any((candidate / marcador).exists() for marcador in _MARCADORES):
+            return candidate
+    raise RuntimeError("Raiz do projeto não encontrada.")
 
 
 PROJECT_ROOT = get_project_root()
+
 DATA_DIR = PROJECT_ROOT / "dados"
-DATA_DIR.mkdir(exist_ok=True)
-
-DADOS_AMOR_A_CAKES = DATA_DIR / "dataset_cafeterias_rj.xlsx"  # Nome padronizado
-DADOS_AMOR_A_CAKES_TRATADOS = DATA_DIR / "dataset_cafeterias_rj_limpo.xlsx"  # Exemplo
-
-def dataset_exists() -> bool:
-    """Verifica de forma preguiçosa se o dataset local existe.
-
-    Evita quebrar import em ambientes CI; o pipeline decide fallback
-    para dados sintéticos quando o arquivo estiver ausente.
-    """
-    return DADOS_AMOR_A_CAKES.exists()
-
-def dataset_exists() -> bool:
-    """Verifica de forma preguiçosa se o dataset local existe.
-
-    Evita quebrar import em ambientes CI; o pipeline decide fallback
-    para dados sintéticos quando o arquivo estiver ausente.
-    """
-    return DADOS_AMOR_A_CAKES_TRATADOS.exists()
-
-
 MODELS_DIR = PROJECT_ROOT / "models"
-MODELS_DIR.mkdir(exist_ok=True)  # Cria a pasta se não existir
-
-
 REPORTS_DIR = PROJECT_ROOT / "report"
-REPORTS_DIR.mkdir(exist_ok=True)
+DOCS_DIR = PROJECT_ROOT / "docs"
+NOTEBOOKS_DIR = PROJECT_ROOT / "notebooks"
+
+for _dir in (DATA_DIR, MODELS_DIR, REPORTS_DIR):
+    _dir.mkdir(parents=True, exist_ok=True)
+
+
+# --- Datasets (dados crus e tratados) ---------------------------------------
+# Nomes de-identificados; o dono real da base é mantido fora do repositório
+# público. Ver Fase 1 do plano para o pipeline de dados em Parquet + DVC.
+DADOS_AMOR_A_CAKES = DATA_DIR / "dataset_cafeterias_rj.xlsx"
+DADOS_AMOR_A_CAKES_TRATADOS = DATA_DIR / "dataset_cafeterias_rj_limpo.xlsx"
+
+
+def dataset_exists(caminho: Path | None = None) -> bool:
+    """Verifica de forma preguiçosa se o dataset local existe.
+
+    Evita quebrar import em ambientes CI; o pipeline decide o fallback
+    para dados sintéticos quando o arquivo estiver ausente.
+    """
+    return (caminho or DADOS_AMOR_A_CAKES).exists()

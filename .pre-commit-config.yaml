@@ -17,8 +17,6 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.3
     hooks:
+      # ruff apenas para lint; a formatação fica a cargo do black.
       - id: ruff
-        files: ^(src|tests)/
-        args: ["--line-length=88"]
-      - id: ruff-format
         files: ^(src|tests)/

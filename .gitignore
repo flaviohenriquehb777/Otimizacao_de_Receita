@@ -2,6 +2,17 @@
 __pycache__/
 *.py[cod]
 
+# Ambiente virtual e caches de ferramentas
+.venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Cobertura de testes
+.coverage
+coverage.xml
+htmlcov/
+
 # Jupyter
 .ipynb_checkpoints/
 # Permitir versionar notebooks (apenas ignora checkpoints)
@@ -19,6 +30,7 @@ report/
 
 # Data (use external storage; commit samples only if needed)
 dados/*.xlsx
+dados/*.parquet
 !dados/.gitkeep
 
 # OS/editor
