@@ -36,6 +36,7 @@ for _dir in (DATA_DIR, MODELS_DIR, REPORTS_DIR):
 # Nomes de-identificados; o dono real da base é mantido fora do repositório
 # público. O dataset canônico é gerado em Parquet e versionado via DVC.
 DADOS_CAFETERIAS_PARQUET = DATA_DIR / "dataset_cafeterias_rj.parquet"
+DADOS_CAFETERIAS_PREPARADO = DATA_DIR / "dataset_cafeterias_rj_preparado.parquet"
 DADOS_AMOR_A_CAKES = DATA_DIR / "dataset_cafeterias_rj.xlsx"
 DADOS_AMOR_A_CAKES_TRATADOS = DATA_DIR / "dataset_cafeterias_rj_limpo.xlsx"
 

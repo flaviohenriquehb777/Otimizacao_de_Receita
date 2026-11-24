@@ -8,6 +8,16 @@ stages:
     outs:
       - dados/dataset_cafeterias_rj.parquet
 
+  preparar_dados:
+    desc: Valida a base bruta, deriva features leakage-safe e materializa o split temporal.
+    cmd: python -m src.data.preparar_dataset
+    deps:
+      - src/data/preparar_dataset.py
+      - src/config/paths.py
+      - dados/dataset_cafeterias_rj.parquet
+    outs:
+      - dados/dataset_cafeterias_rj_preparado.parquet
+
   train:
     desc: Treina e seleciona o melhor modelo (lucro esperado em holdout) e publica artefatos.
     cmd: python -m src.modeling.train_pipeline

@@ -1,4 +1,4 @@
-# Otimização de Receita com Machine Learning
+<h1 align="center">Otimização de Receita com Machine Learning</h1>
 
 [![Build CI](https://github.com/flaviohenriquehb777/Otimizacao_de_Receita/actions/workflows/ci.yml/badge.svg)](https://github.com/flaviohenriquehb777/Otimizacao_de_Receita/actions/workflows/ci.yml)
 [![Pages](https://img.shields.io/github/deployments/flaviohenriquehb777/Otimizacao_de_Receita/github-pages?label=pages)](https://github.com/flaviohenriquehb777/Otimizacao_de_Receita/deployments/activity_log?environment=github-pages)
@@ -47,61 +47,54 @@ Este modelo foca na aplicação de Machine Learning (Regressão Linear) para ana
 
 ## Estrutura do Modelo
 
-- `dados/`: bases originais utilizadas nos estudos (não são necessárias para rodar a aplicação web; o treino usa `dataset_cafeterias_rj.xlsx`).
-  - `dataset_cafeterias_rj.xlsx`
-  - `dadosVenda.xlsx`
-- `notebooks/`: cadernos Jupyter (EDA e estudos); não são obrigatórios para uso da aplicação.
-  - `01_Projeto_Maximizacao_Receita_Inicial.ipynb`
-  - `02_Projeto_Maximizacao_Receita_EDA_Preprocess.ipynb`
-  - `03_Projeto_Maximizacao_Receita_Modelagem_Validacao.ipynb`
-  - `04_Diagnostico_Receita_e_Politicas.ipynb` (diagnóstico de receita e política ótima)
+- `dados/`: dados canônicos em **Parquet**, governados pelo **DVC** (nunca versionados no Git).
+  - `dataset_cafeterias_rj.parquet`: base bruta calibrada (saída de `gerar_dados`).
+  - `dataset_cafeterias_rj_preparado.parquet`: base preparada, com features e split temporal (saída de `preparar_dados`).
+- `notebooks/`: cadernos Jupyter organizados por CRISP-DM.
+  - `clean/`: sem saídas, prontos para leitura e execução.
+    - `01_business_understanding.ipynb`, `02_data_understanding.ipynb`, `03_data_preparation.ipynb`
+  - `executed/`: cópias executadas (com saídas e `execution_count`).
 - `src/`: código-fonte
-  - `config/paths.py`: caminhos e constantes
-  - `modeling/train_pipeline.py`: pipeline de treino, validação e geração de artefatos
-  - `modeling/train_linear.py`: treino simples (compatível, mas o pipeline é preferível)
-- `models/`: artefatos gerados pelo treino (ex.: `best_model_max_receita.pkl`, `curve_business_metric.csv`, `model_linear.json`, `shap_summary.png`)
-- `docs/`: site estático consumindo `model_linear.json` e `curve_business_metric.csv`
-  - `index.html`
-  - `model_linear.json`
-  - `curve_business_metric.csv`
-  - `curve_business_metric.png`
-  - `diag_holdout_scatter.png`
-  - `diag_residuos.png`
-  - `policy_otima_resumo.csv`
-- `.github/workflows/ci.yml`: CI para instalar, testar, treinar e publicar `docs/`
-- `tests/`: testes unitários/integrados
-- `requirements.txt`, `README.md`, `LICENSE.md`
+  - `config/paths.py`: fonte única de verdade de caminhos e constantes
+  - `data/gerar_dataset.py`: gera a base bruta calibrada (determinística, `SEED = 42`)
+  - `data/preparar_dataset.py`: validação fail-closed, limpeza, features leakage-safe e split temporal
+  - `modeling/train_pipeline.py`: treino, seleção do melhor modelo e publicação de artefatos
+- `models/`: artefatos do treino, governados pelo **DVC** (fora do Git).
+- `dvc.yaml` / `dvc.lock`: definição e travas do pipeline (`gerar_dados → preparar_dados → train`).
+- `docs/`: site estático (GitHub Pages) que consome os artefatos publicados pelo treino.
+- `.github/workflows/`: CI (testes/qualidade) e MLOps (pipeline + publicação).
+- `tests/`: testes unitários e de integração.
+- `pyproject.toml` / `uv.lock`: ambiente reprodutível com **UV**.
 
 ## Base de Dados:
 
-O modelo utiliza o arquivo `dataset_cafeterias_rj.xlsx` (constante `DADOS_AMOR_A_CAKES`), localizado na pasta `dados/`. Este dataset inclui as seguintes colunas principais:
+Os dados transacionais reais (POS/ERP, iFood, WhatsApp) não são públicos. Para tornar o projeto
+reprodutível de ponta a ponta, a base é **sintética e calibrada** por fatos verificados do negócio
+(tabela de preços real, mecânicas promocionais e sazonalidade), com nomenclatura
+**de-identificada**. A base canônica é o Parquet `dados/dataset_cafeterias_rj.parquet`
+(grão: data × loja × produto), versionado via **DVC**.
 
-* `preco_final`: Preço final de venda do produto.
-* `preco_original`: Preço original do produto antes de qualquer desconto.
-* `desconto_pct`: Desconto aplicado ao produto (0–0.04).
-* `quantidade_vendida_dia` e `quantidade_vendida_mes`: Quantidades vendidas.
+Colunas principais:
 
-Com base nos testes de normalidade (Shapiro) e homogeneidade de variâncias (Levene), optamos por **não normalizar** (sem scaler) para a Regressão Linear e tratamos outliers com **winsorização por IQR** nas variáveis numéricas.
+* `preco_original` / `preco_final` / `desconto_pct`: preço cheio, preço praticado e desconto (0–0,6).
+* `custo_producao`, `preco_competidor`, `gasto_marketing`.
+* `quantidade_vendida_dia` (alvo transacional) e `quantidade_vendida_mes` (**agregado** — tratado como vazamento na modelagem).
+* Sazonalidade/calendário: `feriado_flag`, `evento_especial`, `promocao_tipo`.
 
-## Metodologia de Análise e Modelagem:
+A etapa de *Data Preparation* valida a consistência aritmética
+(`preco_final == preco_original × (1 − desconto)`), deriva features de negócio e materializa o
+**split temporal estrito** (treino ≤ 2025-06-30; validação ≤ 2025-09-30; teste = Q4/2025).
 
-O desenvolvimento do modelo seguiu as seguintes etapas:
+## Metodologia de Análise e Modelagem
 
-1.  **Carregamento e Inspeção de Dados:** Inicialização e compreensão da estrutura da base de dados.
-2.  **Análise Exploratória de Dados (EDA):** Identificação de padrões, tendências e anomalias nas relações entre preço, desconto e quantidade vendida.
-3.  **Pré-processamento:**
-    * Tratamento de valores ausentes (se houver).
-    * Escalonamento das variáveis numéricas para padronização.
-    * Divisão dos dados em conjuntos de treino e teste.
-4.  **Modelagem Preditiva:**
-    * Avaliação de diversos algoritmos de regressão para prever a `VendaQtd`.
-    * A **Regressão Linear** foi selecionada devido ao seu bom ajuste e interpretabilidade.
-    * Utilização de *pipelines* do scikit-learn para encapsular etapas de pré-processamento e modelagem.
-5.  **Avaliação do Modelo:**
-    * Métricas como RMSE (Root Mean Squared Error) e R² (Coeficiente de Determinação) foram utilizadas para avaliar a performance do modelo.
-    * Análise da curva de aprendizagem para verificar *underfitting* ou *overfitting*.
-6.  **Otimização de Receita:**
-    * A aplicação web varre descontos entre 0% e 4% (resolução configurável), calcula `preco_final = preco_original * (1 - desconto)` e prevê `quantidade_vendida`. Em seguida, maximiza `receita = preco_final * quantidade_vendida`.
+O projeto segue o **CRISP-DM**, com cada etapa materializada em código testável e espelhada nos notebooks:
+
+1. **Business Understanding** — objetivo, KPIs e critérios de sucesso (`notebooks/clean/01_business_understanding.ipynb`).
+2. **Data Understanding** — esquema, regras de negócio e distribuições (`02_data_understanding.ipynb`).
+3. **Data Preparation** — validação fail-closed, features **sem vazamento** e split temporal estrito (`03_data_preparation.ipynb`, `src/data/preparar_dataset.py`).
+4. **Modeling** — treino e seleção do melhor modelo por lucro esperado em holdout (`src/modeling/train_pipeline.py`). *Guardrail* anti-leakage: colunas agregadas do próprio dia-alvo nunca entram como preditoras.
+5. **Evaluation** — métricas no holdout temporal (Q4) e curva de negócio; o recorte de teste é sempre o futuro.
+6. **Deployment** — os artefatos versionados (base preparada + melhor modelo) alimentam o app; o resultado exibido deriva do **modelo real** e da **lógica de negócio real**, nunca de valores fixos.
 
 ## Resultados Chave e Recomendações:
 
@@ -121,64 +114,52 @@ Os resultados dependem dos coeficientes reais treinados no seu ambiente. A aplic
 
 ## Instalação e Uso
 
-Para configurar e executar este modelo em seu ambiente local, siga as instruções abaixo:
-
 1. **Pré-requisitos**
-   - Python 3.12 (recomendado; CI usa 3.12)
-   - `pip`
-   - (Opcional) Jupyter Lab para explorar os notebooks
+   - Python 3.12
+   - [UV](https://docs.astral.sh/uv/) — gerencia `pyproject.toml` + `uv.lock`
 
-2.  **Clone o repositório:**
+2. **Clone o repositório**
     ```bash
     git clone https://github.com/flaviohenriquehb777/Otimizacao_de_Receita.git
     cd Otimizacao_de_Receita
     ```
-    *(Se estiver usando um fork, substitua pelo seu usuário do GitHub.)*
 
 3. **Instale as dependências**
     ```bash
-    pip install -r requirements.txt
+    uv sync
     ```
 
-4. **(Opcional) Acesse e execute os notebooks**
+4. **Reproduza o pipeline completo (dados → modelo)**
     ```bash
-    jupyter lab
+    uv run dvc repro
     ```
-    * Navegue até `notebooks/` e abra: `01_Projeto_Maximizacao_Receita_Inicial.ipynb` → `02_Projeto_Maximizacao_Receita_EDA_Preprocess.ipynb` → `03_Projeto_Maximizacao_Receita_Modelagem_Validacao.ipynb`.
-    * Para diagnóstico profissional e política de desconto, execute `04_Diagnostico_Receita_e_Politicas.ipynb`:
-      - Detecta o alvo (receita ou quantidade) dos artefatos de treino.
-      - Gera gráficos de diagnóstico (holdout: real vs predito, resíduos).
-      - Publica curva de negócio e resumo da política ótima em `docs/`.
-      - Saídas: `docs/curve_business_metric.png`, `docs/diag_holdout_scatter.png`, `docs/diag_residuos.png`, `docs/policy_otima_resumo.csv`.
+    O DAG é `gerar_dados → preparar_dados → train`, e o `dvc.lock` trava a reprodutibilidade.
+    Para inspecionar: `uv run dvc dag`.
 
-5. **Execute os testes e o pipeline de treino**
-   ```bash
-   # Defina PYTHONPATH para permitir imports dos testes
-   export PYTHONPATH=$(pwd)   # Linux/macOS
-   # No Windows PowerShell: $env:PYTHONPATH = (Get-Location).Path
+5. **Execute os testes**
+    ```bash
+    uv run pytest -q
+    ```
 
-   pytest -q
-   python -m src.modeling.train_pipeline
-   ```
-   - Artefatos gerados em `models/`: `best_model_max_receita.pkl`, `model_best.onnx`, `model_best_meta.json`, `curve_business_metric.csv`, `model_linear.json`, `shap_summary.png`.
-   - O snapshot `models/metrics_snapshot.json` inclui o campo `target` (alvo do treino) para consumo por testes e notebooks.
-   - O pipeline publica automaticamente em `docs/`: `model_best.onnx`, `model_best_meta.json`, `curve_business_metric.csv`, além de manter `model_linear.json` para compatibilidade.
+6. **(Opcional) Explore os notebooks CRISP-DM**
+    ```bash
+    uv run jupyter lab
+    ```
+    Abra `notebooks/clean/` (sem saídas) ou `notebooks/executed/` (com saídas). Os espelhos
+    executados são gerados por `scripts/exec_notebook.py`.
 
-6. **Suba o site estático localmente**
-   ```bash
-   python -m http.server 8000
-   # Abra http://localhost:8000/docs/
-   ```
+7. **Suba o site estático localmente**
+    ```bash
+    uv run python -m http.server 8000
+    # Abra http://localhost:8000/docs/
+    ```
 
 ## Boas práticas e versão de arquivos
 
-- Artefatos pesados e dados brutos não são versionados (ver `.gitignore`).
-- Os notebooks são materiais de apoio; a aplicação e a CI usam o código em `src/`.
-- A CI
-  - Instala dependências
-  - Executa `pytest` com `PYTHONPATH`
-  - Treina com `python -m src.modeling.train_pipeline`
-  - Copia artefatos para `docs/` e publica GitHub Pages
+- Dados e artefatos de modelo **não** são versionados no Git: a governança é do **DVC** (`dvc.yaml` + `dvc.lock`).
+- Tudo em `src/` é determinístico (`SEED = 42`) e coberto por testes; os notebooks apenas orquestram o código.
+- A mesma lógica de preparação usada no pipeline é reaproveitada pelos notebooks e pelo app — sem duplicação.
+- A CI instala dependências, roda `pytest` e valida o pipeline; o workflow de MLOps reproduz e publica os artefatos.
 
 ## Modelo na página vs Best Model
 
