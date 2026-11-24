@@ -1,12 +1,24 @@
 stages:
+  gerar_dados:
+    desc: Gera o dataset canônico calibrado (Parquet) a partir do dossiê de negócio.
+    cmd: python -m src.data.gerar_dataset
+    deps:
+      - src/data/gerar_dataset.py
+      - src/config/paths.py
+    outs:
+      - dados/dataset_cafeterias_rj.parquet
+
   train:
+    desc: Treina e seleciona o melhor modelo (lucro esperado em holdout) e publica artefatos.
     cmd: python -m src.modeling.train_pipeline
     deps:
       - src/modeling/train_pipeline.py
       - src/config/paths.py
+      - dados/dataset_cafeterias_rj.parquet
     outs:
+      - models/best_model_max_receita.pkl
       - models/model_linear.json
       - models/metrics_snapshot.json
+      - models/curve_business_metric.csv
       - models/model_best.onnx
       - models/model_best_meta.json
-      - models/curve_business_metric.csv

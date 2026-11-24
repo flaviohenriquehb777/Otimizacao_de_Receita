@@ -1,0 +1,58 @@
+schema: '2.0'
+stages:
+  gerar_dados:
+    cmd: python -m src.data.gerar_dataset
+    deps:
+    - path: src/config/paths.py
+      hash: md5
+      md5: 3bae1d678a92dc3af518a0430444e5bd
+      size: 1951
+    - path: src/data/gerar_dataset.py
+      hash: md5
+      md5: 61a9156b6b3514457b3cb5e217c118fd
+      size: 16241
+    outs:
+    - path: dados/dataset_cafeterias_rj.parquet
+      hash: md5
+      md5: cd7e95bed6c0ec40fba9d56c0c0c501c
+      size: 1199411
+  train:
+    cmd: python -m src.modeling.train_pipeline
+    deps:
+    - path: dados/dataset_cafeterias_rj.parquet
+      hash: md5
+      md5: cd7e95bed6c0ec40fba9d56c0c0c501c
+      size: 1199411
+    - path: src/config/paths.py
+      hash: md5
+      md5: 3bae1d678a92dc3af518a0430444e5bd
+      size: 1951
+    - path: src/modeling/train_pipeline.py
+      hash: md5
+      md5: 7f29c034956853a129d27aeb9df0cf3b
+      size: 28851
+    outs:
+    - path: models/best_model_max_receita.pkl
+      hash: md5
+      md5: c0944ce75016a5e05334df71d0191801
+      size: 920
+    - path: models/curve_business_metric.csv
+      hash: md5
+      md5: 45b712924eb190d6b52bf81f726add89
+      size: 2649
+    - path: models/metrics_snapshot.json
+      hash: md5
+      md5: 402a87c9948d85825dd148eba1384c1e
+      size: 860
+    - path: models/model_best.onnx
+      hash: md5
+      md5: 2c674f83a273560edcd9c40e94e7efdd
+      size: 286
+    - path: models/model_best_meta.json
+      hash: md5
+      md5: d737cd259e08fa8f1cf1bcd7858bc386
+      size: 177
+    - path: models/model_linear.json
+      hash: md5
+      md5: 18e7d0b09374b62a85cbab62baf3d65d
+      size: 626
