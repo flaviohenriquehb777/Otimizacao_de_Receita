@@ -52,6 +52,14 @@ jobs:
           [ -z "$DAGSHUB_TOKEN" ] && echo "Falta DAGSHUB_TOKEN" && exit 1 || echo "DAGSHUB_TOKEN OK"
           echo "MLFLOW_TRACKING_URI será: https://dagshub.com/${DAGSHUB_OWNER}/${DAGSHUB_REPO}.mlflow"
 
+      - name: Generate dataset (deterministic simulator)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          CI: true
+        run: |
+          python -m src.data.gerar_dataset
+          python -m src.data.preparar_dataset
+
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
