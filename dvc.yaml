@@ -19,16 +19,16 @@ stages:
       - dados/dataset_cafeterias_rj_preparado.parquet
 
   train:
-    desc: Treina e seleciona o melhor modelo (lucro esperado em holdout) e publica artefatos.
+    desc: Treina o modelo de demanda, escolhe o desconto ótimo e publica os artefatos.
     cmd: python -m src.modeling.train_pipeline
     deps:
       - src/modeling/train_pipeline.py
+      - src/data/preparar_dataset.py
       - src/config/paths.py
-      - dados/dataset_cafeterias_rj.parquet
+      - dados/dataset_cafeterias_rj_preparado.parquet
     outs:
-      - models/best_model_max_receita.pkl
-      - models/model_linear.json
+      - models/best_model.pkl
       - models/metrics_snapshot.json
-      - models/curve_business_metric.csv
-      - models/model_best.onnx
-      - models/model_best_meta.json
+      - models/model_card.json
+      - models/business_curve.csv
+      - models/test_predictions.parquet

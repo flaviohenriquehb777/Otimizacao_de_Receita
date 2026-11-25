@@ -1,34 +1,77 @@
-import os
-import json
-from pathlib import Path
-from dataclasses import dataclass
-import warnings
-import contextlib
+"""Modelagem prescritiva de preço e desconto (CRISP-DM — Modeling / Evaluation).
 
+Framing de negócio
+------------------
+O objetivo não é "prever vendas", é **decidir o desconto** que maximiza o lucro.
+Para isso separamos duas coisas:
+
+1. **Modelo de demanda** — aprende `quantidade_vendida_dia` a partir das
+   variáveis de decisão (preço/desconto) e do contexto (loja, produto, clima,
+   calendário). É o preditor.
+2. **Otimizador de preço** — usa o modelo de demanda para escolher, por linha, o
+   desconto de uma grade que maximiza o lucro esperado
+   `(preço_final − custo) × demanda_prevista`, respeitando o piso de preço
+   (`preco_minimo`).
+
+Protocolo temporal honesto (anti-leakage)
+-----------------------------------------
+A base preparada já traz o split temporal estrito. A avaliação é sempre
+passado → futuro, sem embaralhar:
+
+* **treino** (≤ 2025-06-30): ajuste dos candidatos;
+* **validação** (jul–set/2025): seleção do modelo por lucro esperado;
+* **teste** (Q4/2025, o pico festivo): relatório final, nunca usado na seleção.
+
+O campeão é **re-ajustado em treino + validação** antes do teste, para usar todo
+o passado disponível — mantendo o teste intocado.
+
+Honestidade das métricas
+------------------------
+As métricas de demanda (RMSE/MAE/R²) no teste são *factuais* (comparamos a
+previsão com a demanda realmente observada). Já o lucro da política é
+*contrafactual*: estimamos a demanda sob descontos que não ocorreram, logo é uma
+**estimativa** — reportada como tal, junto de um baseline ingênuo para calibrar a
+expectativa.
+
+Reprodutibilidade
+-----------------
+Determinístico (`SEED = 42`); a seleção usa apenas validação; o teste é o futuro.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import json
+import os
+import warnings
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+import joblib
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold, TimeSeriesSplit, train_test_split
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-from sklearn.linear_model import LinearRegression, RidgeCV, LassoCV, ElasticNetCV
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-try:
-    from xgboost import XGBRegressor
-except Exception:
-    XGBRegressor = None
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
+from sklearn.inspection import permutation_importance
+from sklearn.linear_model import RidgeCV
+from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
-# SHAP opcional (evita dependências nativas em runners mínimos)
-try:
-    import shap  # type: ignore
-    HAS_SHAP = True
-except Exception:
-    shap = None  # type: ignore
-    HAS_SHAP = False
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+from src.config.paths import DADOS_CAFETERIAS_PREPARADO, MODELS_DIR
+from src.data.preparar_dataset import colunas_com_vazamento
+
+try:  # XGBoost é opcional para não travar ambientes mínimos.
+    from xgboost import XGBRegressor
+except Exception:  # pragma: no cover - dependência opcional
+    XGBRegressor = None  # type: ignore[assignment]
 
 try:
     import mlflow  # type: ignore
-except Exception:
+except Exception:  # pragma: no cover - MLflow é opcional
+
     class _NoopRunInfo:
         run_id = "no-mlflow"
 
@@ -57,599 +100,816 @@ except Exception:
         def set_tag(self, *args, **kwargs):
             return None
 
+        def get_tracking_uri(self):
+            return "local"
+
     mlflow = _NoopMlflow()
 
-try:
-    import dagshub
-except Exception:
-    dagshub = None
+SEED = 42
+TARGET = "quantidade_vendida_dia"
 
-from src.config.paths import MODELS_DIR, PROJECT_ROOT, caminho_dataset
+# --- Contrato de features (explícito e leakage-safe) -------------------------
+# Curado manualmente e validado contra o guardrail de vazamento da camada de
+# dados (`colunas_com_vazamento`). Nunca incluir agregados do próprio dia-alvo
+# (`quantidade_vendida_mes`) nem desfechos derivados da demanda
+# (`estoque_disponivel`, `ruptura_flag`, `custo_marketing_unitario`).
+#
+# `ano`/`trimestre` são deliberadamente excluídos: com split temporal, o modelo
+# não pode "saber" o ano para extrapolar tendência — só a sazonalidade (`mes`).
+FEATURES_NUMERICAS: tuple[str, ...] = (
+    # Variáveis de decisão (o otimizador manipula estas).
+    "preco_original",
+    "desconto_pct",
+    "preco_final",
+    # Estrutura de custo e competição.
+    "custo_producao",
+    "preco_minimo",
+    "preco_competidor",
+    "indice_preco_competidor",
+    # Contexto de demanda.
+    "gasto_marketing",
+    "temperatura",
+    "chuva_mm",
+    "mes",
+    "dia_semana_idx",
+    "fim_de_semana",
+    "feriado_flag",
+    "promocao_flag",
+)
+
+FEATURES_CATEGORICAS: tuple[str, ...] = (
+    "loja",
+    "produto",
+    "categoria",
+    "canal",
+    "evento_especial",
+    "promocao_tipo",
+    "tipo_produto",
+    "tamanho_embalagem",
+    "perfil_loja",
+)
+
+# Grade de descontos avaliada pelo otimizador. Cap em 12% = teto do desconto de
+# balcão **sem promoção** (U(0,03; 0,12)), a única região em que o contrafactual
+# "desconto sem promoção" está identificado nos dados. Acima disso os descontos
+# observados (Item do Mês, até 16,4%) vêm sempre atrelados a um lift promocional,
+# e os aprendizes de árvore extrapolam o lucro para cima — auditoria: na grade
+# [0; 0,16] o HGB infla +71% e o RF +37% de uplift, contra a verdade estritamente
+# decrescente. Limitar a grade mantém a curva de lucro monotônica e o uplift
+# defensável. Baseline e verdade concordam que o ótimo está na ponta barata.
+GRADE_DESCONTO: np.ndarray = np.round(np.arange(0.0, 0.1201, 0.01), 4)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ModelSpec:
-    name: str
-    estimator: object
-    params: dict
+    """Candidato de modelo: nome legível + pipeline sklearn pronto para ajuste."""
 
+    nome: str
+    pipeline: Pipeline
+    params: dict[str, object]
+
+
+# --- 1) Dados -----------------------------------------------------------------
+
+
+def carregar_base_preparada(caminho: Path | None = None) -> pd.DataFrame:
+    """Carrega a base preparada canônica (features leakage-safe + split)."""
+    caminho = caminho or DADOS_CAFETERIAS_PREPARADO
+    if not caminho.exists():
+        raise FileNotFoundError(
+            f"Base preparada não encontrada em {caminho}. "
+            "Rode 'dvc repro' (ou 'python -m src.data.preparar_dataset')."
+        )
+    return pd.read_parquet(caminho)
+
+
+def validar_contrato_features(df: pd.DataFrame) -> None:
+    """Fail-closed: o contrato de features precisa existir e ser leakage-safe."""
+    features = (*FEATURES_NUMERICAS, *FEATURES_CATEGORICAS)
+    faltantes = [c for c in features if c not in df.columns]
+    if faltantes:
+        raise ValueError(f"Features ausentes na base preparada: {faltantes}")
+    vazamento = sorted(set(features) & set(colunas_com_vazamento()))
+    if vazamento:
+        raise ValueError(f"Vazamento de dados no contrato de features: {vazamento}")
+    if TARGET in features:
+        raise ValueError("O alvo não pode ser feature.")
+
+
+def separar_splits(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Devolve as vistas temporalmente disjuntas treino/validação/teste."""
+    splits = {
+        nome: df[df["split"] == nome].copy()
+        for nome in ("treino", "validacao", "teste")
+    }
+    vazio = [nome for nome, parte in splits.items() if parte.empty]
+    if vazio:
+        raise ValueError(f"Splits vazios na base preparada: {vazio}")
+    return splits
+
+
+def _hash_dados(df: pd.DataFrame) -> str:
+    """Hash determinístico do conteúdo (proveniência leve dos dados usados)."""
+    hashed = pd.util.hash_pandas_object(df, index=False).to_numpy(dtype=np.uint64)
+    return hashlib.sha256(hashed.tobytes()).hexdigest()[:16]
+
+
+# --- 2) Otimizador de preço ---------------------------------------------------
+
+
+def _aplicar_desconto(X: pd.DataFrame, desconto: float) -> pd.DataFrame:
+    """Reescreve o cenário para um desconto `d`, mantendo as features coerentes."""
+    Xd = X.copy()
+    preco_final = (X["preco_original"] * (1.0 - desconto)).round(2)
+    Xd["desconto_pct"] = desconto
+    Xd["preco_final"] = preco_final
+    if "indice_preco_competidor" in Xd.columns:
+        Xd["indice_preco_competidor"] = (preco_final / X["preco_competidor"]).round(4)
+    return Xd
+
+
+def matriz_lucro(
+    modelo, X: pd.DataFrame, grade: np.ndarray = GRADE_DESCONTO
+) -> np.ndarray:
+    """Lucro esperado por linha e por desconto, respeitando o piso de preço.
+
+    Retorna uma matriz ``(n_linhas, n_descontos)``. Cenários que derrubam o preço
+    abaixo de `preco_minimo` recebem ``-inf`` (inviáveis); a coluna sem desconto é
+    sempre factível, garantindo ao menos uma opção por linha.
+    """
+    preco_original = X["preco_original"].to_numpy(dtype=float)
+    custo = X["custo_producao"].to_numpy(dtype=float)
+    preco_minimo = X["preco_minimo"].to_numpy(dtype=float)
+
+    lucro = np.empty((len(X), len(grade)), dtype=float)
+    for j, d in enumerate(grade):
+        qtd = np.asarray(modelo.predict(_aplicar_desconto(X, float(d))), dtype=float)
+        preco = preco_original * (1.0 - float(d))
+        lucro[:, j] = (preco - custo) * qtd
+
+    preco_grade = preco_original[:, None] * (1.0 - grade)[None, :]
+    inviavel = preco_grade < preco_minimo[:, None]
+    inviavel[:, 0] = False
+    return np.where(inviavel, -np.inf, lucro)
+
+
+def politica_otima(
+    modelo, X: pd.DataFrame, grade: np.ndarray = GRADE_DESCONTO
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Desconto ótimo por linha, lucro da política e lucro do baseline (preço cheio)."""
+    lucro = matriz_lucro(modelo, X, grade)
+    melhor = np.argmax(lucro, axis=1)
+    linhas = np.arange(len(X))
+    return grade[melhor], lucro[linhas, melhor], lucro[:, 0]
+
+
+def metricas_negocio(modelo, X: pd.DataFrame) -> dict[str, float]:
+    """Resume o valor de negócio da política otimizada versus o preço de tabela."""
+    desconto, lucro_politica, lucro_baseline = politica_otima(modelo, X)
+    baseline = float(np.mean(lucro_baseline))
+    politica = float(np.mean(lucro_politica))
+    uplift = float((politica - baseline) / baseline * 100.0) if baseline else 0.0
+    return {
+        "lucro_baseline": baseline,
+        "lucro_politica": politica,
+        "uplift_pct": uplift,
+        "desconto_medio": float(np.mean(desconto)),
+        "pct_linhas_com_desconto": float(np.mean(desconto > 0.0)),
+    }
+
+
+# --- 3) Modelos ---------------------------------------------------------------
+
+
+def _preprocessador() -> ColumnTransformer:
+    """Escala numéricas e codifica categóricas (one-hot), sem vazamento de fit."""
+    return ColumnTransformer(
+        transformers=[
+            ("num", StandardScaler(), list(FEATURES_NUMERICAS)),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), list(FEATURES_CATEGORICAS)),
+        ]
+    )
+
+
+def _largura_onehot(X: pd.DataFrame) -> int:
+    """Nº de colunas geradas pelo one-hot (para alinhar restrições monotônicas)."""
+    encoder = OneHotEncoder(handle_unknown="ignore").fit(X[list(FEATURES_CATEGORICAS)])
+    return int(sum(len(categorias) for categorias in encoder.categories_))
+
+
+def _restricoes_monotonas(largura_onehot: int) -> tuple[int, ...]:
+    """Impõe o prior econômico: demanda cai com o preço e sobe com o desconto.
+
+    O `ColumnTransformer` emite numéricas primeiro; logo o vetor de restrições
+    segue a ordem de `FEATURES_NUMERICAS` e o bloco one-hot fica neutro (0).
+    """
+    sinais = {"preco_final": -1, "desconto_pct": +1}
+    return (
+        tuple(sinais.get(coluna, 0) for coluna in FEATURES_NUMERICAS)
+        + (0,) * largura_onehot
+    )
+
+
+def construir_candidatos(largura_onehot: int) -> list[ModelSpec]:
+    """Monta os candidatos: baseline linear, floresta, boosting e XGBoost Poisson."""
+    candidatos = [
+        ModelSpec(
+            "RidgeCV",
+            Pipeline(
+                [
+                    ("prep", _preprocessador()),
+                    ("model", RidgeCV(alphas=np.logspace(-3, 3, 13))),
+                ]
+            ),
+            {"alphas": "logspace(-3,3,13)"},
+        ),
+        ModelSpec(
+            "RandomForest",
+            Pipeline(
+                [
+                    ("prep", _preprocessador()),
+                    (
+                        "model",
+                        RandomForestRegressor(
+                            n_estimators=300,
+                            min_samples_leaf=5,
+                            n_jobs=-1,
+                            random_state=SEED,
+                        ),
+                    ),
+                ]
+            ),
+            {"n_estimators": 300, "min_samples_leaf": 5},
+        ),
+        ModelSpec(
+            "HistGradientBoosting",
+            Pipeline(
+                [
+                    ("prep", _preprocessador()),
+                    (
+                        "model",
+                        HistGradientBoostingRegressor(
+                            max_iter=400, learning_rate=0.06, random_state=SEED
+                        ),
+                    ),
+                ]
+            ),
+            {"max_iter": 400, "learning_rate": 0.06},
+        ),
+    ]
+    if XGBRegressor is not None:
+        restricoes = _restricoes_monotonas(largura_onehot)
+        candidatos.append(
+            ModelSpec(
+                "XGBoostPoisson",
+                Pipeline(
+                    [
+                        ("prep", _preprocessador()),
+                        (
+                            "model",
+                            XGBRegressor(
+                                objective="count:poisson",
+                                n_estimators=600,
+                                learning_rate=0.03,
+                                max_depth=5,
+                                subsample=0.9,
+                                colsample_bytree=0.9,
+                                reg_lambda=2.0,
+                                min_child_weight=5,
+                                tree_method="hist",
+                                monotone_constraints=restricoes,
+                                random_state=SEED,
+                            ),
+                        ),
+                    ]
+                ),
+                {
+                    "objective": "count:poisson",
+                    "n_estimators": 600,
+                    "learning_rate": 0.03,
+                    "monotone_constraints": "preco_final=-1, desconto_pct=+1",
+                },
+            )
+        )
+    return candidatos
+
+
+# --- 4) Avaliação -------------------------------------------------------------
+
+
+def metricas_demanda(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    """Métricas factuais de previsão de demanda (+ MAE normalizado pela média)."""
+    mae = float(mean_absolute_error(y_true, y_pred))
+    media = float(np.mean(y_true))
+    return {
+        "rmse": float(root_mean_squared_error(y_true, y_pred)),
+        "mae": mae,
+        "r2": float(r2_score(y_true, y_pred)),
+        "mae_ratio": float(mae / media) if media else float("nan"),
+    }
+
+
+def baselines_ingenuos(
+    treino: pd.DataFrame, X_eval: pd.DataFrame, y_eval: np.ndarray
+) -> dict[str, float]:
+    """RMSE de referências sem modelo: média global e média por (loja, produto)."""
+    media_global = float(treino[TARGET].mean())
+    rmse_global = float(
+        root_mean_squared_error(y_eval, np.full(len(y_eval), media_global))
+    )
+
+    por_sku = treino.groupby(["loja", "produto"])[TARGET].mean()
+    chave = pd.MultiIndex.from_frame(X_eval[["loja", "produto"]])
+    pred_sku = por_sku.reindex(chave).fillna(media_global).to_numpy(dtype=float)
+    rmse_sku = float(root_mean_squared_error(y_eval, pred_sku))
+    return {
+        "rmse_media_global": rmse_global,
+        "rmse_media_sku": rmse_sku,
+        "media_alvo_treino": media_global,
+    }
+
+
+def importancias_por_feature(
+    pipeline: Pipeline, X: pd.DataFrame, y: pd.Series
+) -> dict[str, float]:
+    """Importância das features originais (legível para negócio).
+
+    Usa o atributo nativo quando existe — coeficientes (lineares) ou importâncias
+    (árvores) — somando o bloco one-hot de volta ao nome da feature original.
+    Quando o estimador não expõe nenhum dos dois (ex.: HistGradientBoosting),
+    cai em *permutation importance* sobre as features originais, que já é nativa
+    por feature e vale para qualquer modelo.
+    """
+    preprocessador = pipeline.named_steps["prep"]
+    modelo = pipeline.named_steps["model"]
+
+    if hasattr(modelo, "feature_importances_"):
+        valores = np.asarray(modelo.feature_importances_, dtype=float)
+    elif hasattr(modelo, "coef_"):
+        valores = np.abs(np.asarray(modelo.coef_, dtype=float)).ravel()
+    else:
+        perm = permutation_importance(
+            pipeline, X, y, n_repeats=8, random_state=SEED, n_jobs=-1
+        )
+        nomes = (*FEATURES_NUMERICAS, *FEATURES_CATEGORICAS)
+        ordenado = sorted(
+            zip(nomes, perm.importances_mean, strict=True),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        return {nome: float(valor) for nome, valor in ordenado}
+
+    agregado: dict[str, float] = {}
+    cursor = 0
+    for coluna in FEATURES_NUMERICAS:
+        agregado[coluna] = float(valores[cursor])
+        cursor += 1
+    encoder = preprocessador.named_transformers_["cat"]
+    for coluna, categorias in zip(
+        FEATURES_CATEGORICAS, encoder.categories_, strict=True
+    ):
+        largura = len(categorias)
+        agregado[coluna] = float(np.sum(valores[cursor : cursor + largura]))
+        cursor += largura
+    assert cursor == len(
+        valores
+    ), "Ordem do preprocessador divergiu do contrato de features."
+
+    ordenado = sorted(agregado.items(), key=lambda item: item[1], reverse=True)
+    return dict(ordenado)
+
+
+# --- 5) Artefatos -------------------------------------------------------------
+
+
+def _curva_negocio(
+    modelo, X: pd.DataFrame, grade: np.ndarray = GRADE_DESCONTO
+) -> pd.DataFrame:
+    """Curva média prevista (demanda/receita/lucro) por desconto, para o site/app."""
+    linhas = []
+    for d in grade:
+        qtd = np.asarray(modelo.predict(_aplicar_desconto(X, float(d))), dtype=float)
+        preco = X["preco_original"].to_numpy(dtype=float) * (1.0 - float(d))
+        receita = preco * qtd
+        lucro = (preco - X["custo_producao"].to_numpy(dtype=float)) * qtd
+        linhas.append(
+            {
+                "desconto_pct": float(d),
+                "qtd_media_prevista": float(np.mean(qtd)),
+                "receita_media_prevista": float(np.mean(receita)),
+                "lucro_medio_previsto": float(np.mean(lucro)),
+            }
+        )
+    return pd.DataFrame(linhas)
+
+
+def _enriquecer(modelo, X: pd.DataFrame) -> tuple[dict[str, float], pd.DataFrame]:
+    """Métricas combinadas (demanda + negócio) e a tabela de cenários por linha."""
+    y_pred = np.asarray(modelo.predict(X), dtype=float)
+    desconto, lucro_politica, lucro_baseline = politica_otima(modelo, X)
+    metricas = {
+        **metricas_demanda(X[TARGET].to_numpy(dtype=float), y_pred),
+        **metricas_negocio(modelo, X),
+    }
+    cenarios = X[
+        [
+            "data",
+            "loja",
+            "produto",
+            "preco_original",
+            "preco_minimo",
+            "custo_producao",
+            TARGET,
+        ]
+    ].copy()
+    cenarios["demanda_prevista"] = y_pred
+    cenarios["desconto_otimo"] = desconto
+    cenarios["preco_otimo"] = (cenarios["preco_original"] * (1.0 - desconto)).round(2)
+    cenarios["lucro_politica"] = lucro_politica
+    cenarios["lucro_baseline"] = lucro_baseline
+    return metricas, cenarios
+
+
+# --- 6) Tracking (MLflow/DagsHub opcional, fail-closed) -----------------------
 
 _PROJECT_SLUG = "Otimizacao_de_Receita"
+# Prefixo de variáveis de ambiente DESTE projeto. Namespacear é o que impede
+# herdar credenciais globais de OUTROS projetos DagsHub na mesma máquina.
+_ENV_PREFIX = "OTIMIZACAO_"
+# Credenciais genéricas (compartilháveis entre projetos) que NUNCA devem ser
+# reaproveitadas silenciosamente aqui.
+_ENV_GENERICAS_CRED: tuple[str, ...] = (
+    "MLFLOW_TRACKING_TOKEN",
+    "MLFLOW_TRACKING_PASSWORD",
+    "DAGSHUB_TOKEN",
+)
+
+
+def _env(*nomes: str) -> str | None:
+    """Primeiro valor não-vazio entre os nomes de variável de ambiente dados."""
+    for nome in nomes:
+        valor = os.getenv(nome)
+        if valor:
+            return valor
+    return None
 
 
 def _belongs_to_this_project(uri: str | None) -> bool:
-    """Verifica se um tracking URI remoto pertence comprovadamente a este projeto.
-
-    Guarda "fail-closed": impede contaminar o MLflow de outro projeto
-    (ex.: Auto-Insurance-Fraud) por causa de variáveis de ambiente globais.
-    """
+    """Só aceita tracking remoto que comprovadamente pertence a este projeto."""
     return _PROJECT_SLUG.lower() in (uri or "").lower()
 
 
-def init_tracking():
-    """Inicializa MLflow e opcionalmente DagsHub, lendo variáveis de ambiente.
+def init_tracking() -> None:
+    """Configura MLflow: local por padrão; remoto só com config deste projeto.
 
-    Suporta ambos padrões de env:
-    - DAGSHUB_REPO_OWNER / DAGSHUB_REPO_NAME
-    - DAGSHUB_OWNER / DAGSHUB_REPO
-    E MLFLOW_TRACKING_URI explícito quando fornecido.
+    Fail-closed contra contaminação entre projetos (a máquina pode hospedar
+    credenciais de vários projetos DagsHub):
 
-    Segurança: só escreve em MLflow remoto se o alvo pertencer comprovadamente
-    a este projeto. Caso contrário (ex.: MLFLOW_TRACKING_URI global apontando
-    para outro repositório), cai para tracking local em ``mlruns/``.
+    1. **Destino** — o repo/URI remoto precisa conter o slug deste projeto; caso
+       contrário, usamos ``mlruns/`` local.
+    2. **Credenciais** — só são aceitas as namespaced (``OTIMIZACAO_...``).
+       Variáveis genéricas (``DAGSHUB_TOKEN``, ``MLFLOW_TRACKING_PASSWORD``) são
+       deliberadamente ignoradas por poderem pertencer a outro projeto, e
+       removidas do ambiente de autenticação do MLflow.
     """
-    # Primeiro, configurar tracking URI (somente se houver credenciais); caso contrário, usar tracking local
-    owner = os.getenv("DAGSHUB_REPO_OWNER") or os.getenv("DAGSHUB_OWNER")
-    repo = os.getenv("DAGSHUB_REPO_NAME") or os.getenv("DAGSHUB_REPO")
-    tracking_uri_env = os.getenv("MLFLOW_TRACKING_URI")
-    username = os.getenv("MLFLOW_TRACKING_USERNAME") or os.getenv("DAGSHUB_USERNAME")
-    password = os.getenv("MLFLOW_TRACKING_PASSWORD") or os.getenv("DAGSHUB_TOKEN")
-    token_env = os.getenv("MLFLOW_TRACKING_TOKEN") or os.getenv("DAGSHUB_TOKEN")
+    repo = _env(f"{_ENV_PREFIX}DAGSHUB_REPO", "DAGSHUB_REPO_NAME", "DAGSHUB_REPO")
+    owner = _env(f"{_ENV_PREFIX}DAGSHUB_OWNER", "DAGSHUB_REPO_OWNER", "DAGSHUB_OWNER")
+    tracking_uri_env = _env(f"{_ENV_PREFIX}MLFLOW_TRACKING_URI", "MLFLOW_TRACKING_URI")
 
-    # Aceitar token-only (sem username/password) para MLflow em DagsHub
-    has_credentials = bool(token_env) or (bool(username) and bool(password))
+    # Credenciais: apenas as específicas deste projeto.
+    usuario = _env(f"{_ENV_PREFIX}MLFLOW_TRACKING_USERNAME")
+    senha = _env(f"{_ENV_PREFIX}MLFLOW_TRACKING_PASSWORD")
+    token = _env(f"{_ENV_PREFIX}MLFLOW_TRACKING_TOKEN", f"{_ENV_PREFIX}DAGSHUB_TOKEN")
+    tem_credenciais = bool(token) or (bool(usuario) and bool(senha))
+    genericas_presentes = [nome for nome in _ENV_GENERICAS_CRED if os.getenv(nome)]
 
-    def set_local_tracking():
+    def _limpar_credenciais_genericas() -> None:
+        """Zera credenciais globais p/ o MLflow não autenticar com outro projeto."""
+        for nome in (*_ENV_GENERICAS_CRED, "MLFLOW_TRACKING_USERNAME"):
+            os.environ.pop(nome, None)
+
+    def _local() -> bool:
         try:
-            local_uri = (Path.cwd() / "mlruns").resolve().as_uri()
-            mlflow.set_tracking_uri(local_uri)
+            mlflow.set_tracking_uri((Path.cwd() / "mlruns").resolve().as_uri())
             return True
-        except Exception as e_local:
-            warnings.warn(f"Falha ao definir tracking local do MLflow: {e_local}")
+        except Exception as erro:  # pragma: no cover - só em ambientes exóticos
+            warnings.warn(
+                f"Falha ao definir tracking local do MLflow: {erro}", stacklevel=2
+            )
             return False
 
-    # Fail-closed: só aceita remoto se, comprovadamente, for deste projeto.
-    remote_uri: str | None = None
+    remoto: str | None = None
     if tracking_uri_env and _belongs_to_this_project(tracking_uri_env):
-        remote_uri = tracking_uri_env
+        remoto = tracking_uri_env
     elif owner and repo and _belongs_to_this_project(repo):
-        remote_uri = f"https://dagshub.com/{owner}/{repo}.mlflow"
+        remoto = f"https://dagshub.com/{owner}/{repo}.mlflow"
     elif tracking_uri_env:
         warnings.warn(
-            "MLFLOW_TRACKING_URI aponta para outro projeto "
-            f"('{tracking_uri_env}'); ignorado para não contaminar o MLflow "
-            "de outro repositório. Usando tracking local em mlruns/."
+            f"MLFLOW_TRACKING_URI ('{tracking_uri_env}') aponta para outro projeto; "
+            "ignorado para não contaminar o tracking alheio. Usando mlruns/ local.",
+            stacklevel=2,
         )
 
-    if remote_uri and has_credentials:
-        if not username and owner:
-            username = owner
-        # Garantir que MLflow leia credenciais via env
-        if username:
-            os.environ.setdefault("MLFLOW_TRACKING_USERNAME", username)
-        if password:
-            os.environ.setdefault("MLFLOW_TRACKING_PASSWORD", password)
-        if token_env:
-            os.environ.setdefault("MLFLOW_TRACKING_TOKEN", token_env)
-
-        try:
-            mlflow.set_tracking_uri(remote_uri)
-            # Inicialização explícita do DagsHub quando em CI ou quando habilitado
-            try:
-                import dagshub  # type: ignore
-                if owner and repo and (os.getenv("CI") or os.getenv("ENABLE_REMOTE_MLFLOW") == "1"):
-                    dagshub.init(repo, owner, mlflow=True)
-            except Exception as e_dag:
-                warnings.warn(f"Falha ao inicializar DagsHub (init): {e_dag}. Prosseguindo com MLflow URI configurado.")
-        except Exception as e_uri:
-            warnings.warn(f"Falha ao definir tracking remoto do MLflow: {e_uri}. Alternando para tracking local.")
-            set_local_tracking()
-    else:
-        # Fallback robusto: tracking local em arquivo, evitando 401/403 (e contaminação)
-        set_local_tracking()
-
-    exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "max_receita_cafeterias")
-    try:
-        mlflow.set_experiment(exp_name)
-    except Exception as e_exp:
-        warnings.warn(f"Falha ao definir experimento '{exp_name}' no MLflow: {e_exp}. Alternando para tracking local e experimento padrão.")
-        # Força fallback local se a configuração de experimento remoto falhar (ex.: 401)
-        if set_local_tracking():
-            try:
-                mlflow.set_experiment(exp_name)
-            except Exception as e_exp2:
-                warnings.warn(f"Falha ao definir experimento local '{exp_name}': {e_exp2}. Prosseguindo com experimento padrão.")
-    try:
-        uri = mlflow.get_tracking_uri()
-        print(f"[MLflow] Tracking URI ativo: {uri}")
-        print(f"[MLflow] Experimento base: {exp_name}")
-    except Exception:
-        pass
-
-    # Não chamar dagshub.init aqui para evitar fluxos OAuth interativos na CI.
-
-
-def load_dataset() -> pd.DataFrame:
-    """
-    Carrega o dataset principal (Parquet canônico ou XLSX legado); se não existir
-    (CI/ambiente limpo), gera um dataset sintético determinístico para permitir
-    treino e testes estáveis.
-    """
-    caminho = caminho_dataset()
-    if caminho.exists():
-        if caminho.suffix == ".parquet":
-            df = pd.read_parquet(caminho)
+    usar_remoto = False
+    if remoto and tem_credenciais:
+        # Espelha APENAS as credenciais deste projeto (nunca deixa sobras globais).
+        if usuario:
+            os.environ["MLFLOW_TRACKING_USERNAME"] = usuario
         else:
-            df = pd.read_excel(caminho)
-    else:
-        rng = np.random.default_rng(42)
-        n = 600
-        dates = pd.date_range("2021-07-01", periods=n, freq="D")
-        preco_original = rng.uniform(20.0, 60.0, size=n)
-        desconto_pct = rng.uniform(0.0, 0.04, size=n)
-        custo_producao = rng.uniform(5.0, 15.0, size=n)
-        preco_final = preco_original * (1.0 - desconto_pct)
-        # Relação: demanda cai com preço, sobe com desconto; ruído controlado
-        base_qty = 500 - 3.5 * preco_final + 1200 * desconto_pct
-        qty_noise = rng.normal(0.0, 25.0, size=n)
-        quantidade_vendida_mes = np.clip(base_qty + qty_noise, a_min=0, a_max=None)
-        df = pd.DataFrame({
-            'data': dates,
-            'custo_producao': custo_producao,
-            'preco_original': preco_original,
-            'desconto_pct': desconto_pct,
-            'preco_final': preco_final,
-            'quantidade_vendida_mes': quantidade_vendida_mes,
-        })
+            os.environ.pop("MLFLOW_TRACKING_USERNAME", None)
+        if senha:
+            os.environ["MLFLOW_TRACKING_PASSWORD"] = senha
+        else:
+            os.environ.pop("MLFLOW_TRACKING_PASSWORD", None)
+        if token:
+            os.environ["MLFLOW_TRACKING_TOKEN"] = token
+        else:
+            os.environ.pop("MLFLOW_TRACKING_TOKEN", None)
+        try:
+            mlflow.set_tracking_uri(remoto)
+            usar_remoto = True
+        except Exception as erro:  # pragma: no cover - rede/credenciais
+            warnings.warn(
+                f"Falha ao definir tracking remoto ({erro}); usando mlruns/ local.",
+                stacklevel=2,
+            )
 
-    df = df.drop_duplicates()
-    if 'data' in df.columns:
-        df['data'] = pd.to_datetime(df['data'], errors='coerce')
-    if {'preco_final','quantidade_vendida_dia'}.issubset(df.columns):
-        df['receita_dia'] = df['preco_final'] * df['quantidade_vendida_dia']
-    if {'preco_final','quantidade_vendida_mes'}.issubset(df.columns):
-        df['receita_mes'] = df['preco_final'] * df['quantidade_vendida_mes']
-    return df
+    if not usar_remoto:
+        if remoto and not tem_credenciais:
+            warnings.warn(
+                "Tracking remoto deste projeto detectado, mas sem credenciais "
+                f"namespaced ('{_ENV_PREFIX}MLFLOW_TRACKING_TOKEN' ou "
+                f"'{_ENV_PREFIX}DAGSHUB_TOKEN'). Usando mlruns/ local.",
+                stacklevel=2,
+            )
+        elif genericas_presentes:
+            warnings.warn(
+                "Credenciais DagsHub genéricas detectadas "
+                f"({', '.join(genericas_presentes)}), mas sem versões namespaced "
+                f"('{_ENV_PREFIX}...'); ignoradas para não contaminar entre projetos. "
+                "Usando mlruns/ local.",
+                stacklevel=2,
+            )
+        _local()
+        _limpar_credenciais_genericas()
+
+    try:
+        mlflow.set_experiment(
+            os.getenv("MLFLOW_EXPERIMENT_NAME", "otimizacao_preco_demanda")
+        )
+        print(f"[MLflow] Tracking URI: {mlflow.get_tracking_uri()}")
+    except Exception as erro:  # pragma: no cover - servidor indisponível
+        warnings.warn(
+            f"Falha ao configurar experimento no MLflow: {erro}", stacklevel=2
+        )
 
 
-def select_features(df: pd.DataFrame):
-    # Prioriza receita como alvo quando disponível; caso contrário, quantidade
-    if 'receita_mes' in df.columns:
-        target = 'receita_mes'
-    elif 'receita_dia' in df.columns:
-        target = 'receita_dia'
-    else:
-        target = 'quantidade_vendida_mes' if 'quantidade_vendida_mes' in df.columns else 'quantidade_vendida_dia'
+def _registrar_candidato(
+    candidato: dict[str, object],
+    campeao: str,
+    resultado: dict[str, object],
+    caminhos: list[Path],
+) -> None:
+    """Um run de MLflow por candidato; o campeão recebe a tag ``model_best``.
 
-    feature_cols = [c for c in ['custo_producao','preco_original','desconto_pct','preco_final'] if c in df.columns]
-    X = df[feature_cols].copy()
-    y = df[target].copy()
-    return X, y, feature_cols, target
+    Loga os hiperparâmetros e as métricas de validação (factuais + negócio). No
+    run campeão, anexa também as métricas do teste (Q4) e os artefatos — de modo
+    que o ``model_best`` fique totalmente rastreável no DagsHub/MLflow.
+    """
+    nome = str(candidato["modelo"])
+    metricas = candidato["validacao"]  # type: ignore[assignment]
+    params = candidato["params"]  # type: ignore[assignment]
+
+    with mlflow.start_run(run_name=nome):
+        mlflow.log_params({"modelo": nome, **params})
+        mlflow.set_tag("fase", "fase3-modelagem")
+        mlflow.set_tag("criterio_selecao", "lucro_politica_validacao")
+        e_campeao = nome == campeao
+        mlflow.set_tag("model_best", str(e_campeao).lower())
+        mlflow.log_metrics(
+            {
+                "validacao_rmse": metricas["rmse"],
+                "validacao_mae": metricas["mae"],
+                "validacao_r2": metricas["r2"],
+                "validacao_lucro_politica": metricas["lucro_politica"],
+                "validacao_uplift_pct": metricas["uplift_pct"],
+                "validacao_desconto_medio": metricas["desconto_medio"],
+            }
+        )
+        if e_campeao:
+            mlflow.log_metrics(
+                {f"teste_{chave}": valor for chave, valor in resultado["teste"].items()}  # type: ignore[union-attr]
+            )
+            for caminho in caminhos:
+                with contextlib.suppress(Exception):
+                    mlflow.log_artifact(str(caminho))
 
 
-def get_model_specs(feature_cols=None, target: str | None = None):
-    specs = [
-        ModelSpec("LinearRegression", LinearRegression(), {}),
-        ModelSpec("RidgeCV", Pipeline([('scaler', StandardScaler()), ('model', RidgeCV(alphas=np.logspace(-3, 3, 21), cv=5))]), {}),
-        ModelSpec("LassoCV", Pipeline([('scaler', StandardScaler()), ('model', LassoCV(alphas=None, cv=5, max_iter=10000, tol=1e-4))]), {}),
-        ModelSpec("ElasticNetCV", Pipeline([('scaler', StandardScaler()), ('model', ElasticNetCV(l1_ratio=[.1,.3,.5,.7,.9], cv=5, max_iter=10000, tol=1e-4))]), {}),
-        ModelSpec("RandomForest", RandomForestRegressor(n_estimators=300, random_state=42), {}),
-        ModelSpec("GradientBoosting", GradientBoostingRegressor(random_state=42), {}),
-    ]
-    if XGBRegressor is not None:
-        # Mapeia restrições monotônicas conforme ordem das features
-        # Para alvo receita, desativamos restrições (neutras). Para quantidade, mantemos.
-        is_revenue_target = target in { 'receita_mes', 'receita_dia' }
-        constraints_map = {
-            'custo_producao': 0 if is_revenue_target else -1,
-            'preco_original': 0 if is_revenue_target else -1,
-            'desconto_pct': 0 if is_revenue_target else +1,
-            'preco_final': 0 if is_revenue_target else -1,
-        }
-        constraints = []
-        if feature_cols is None:
-            feature_cols = [c for c in ['custo_producao','preco_original','desconto_pct','preco_final']]
-        for c in feature_cols:
-            constraints.append(constraints_map.get(c, 0))
-        # XGBoost aceita string com parênteses, ex.: "(0,-1,1,-1)"
-        constraints_str = "(" + ",".join(str(v) for v in constraints) + ")"
-        specs.append(ModelSpec(
-            "XGBRegressor",
-            XGBRegressor(
-                random_state=42,
-                n_estimators=600,
-                learning_rate=0.03,
-                max_depth=5,
-                subsample=0.9,
-                colsample_bytree=0.9,
-                reg_alpha=0.0,
-                reg_lambda=2.0,
-                min_child_weight=5,
-                gamma=0.0,
-                tree_method='hist',
-                objective='reg:squarederror',
-                monotone_constraints=constraints_str,
+def registrar_experimentos(resultado: dict[str, object], caminhos: list[Path]) -> None:
+    """Publica cada candidato no MLflow e marca o campeão como ``model_best``.
+
+    Best-effort: o tracking nunca derruba o pipeline — os artefatos já foram
+    publicados em disco. Com credenciais do DagsHub no ambiente, os runs
+    chegam ao servidor remoto; sem elas, ficam no ``mlruns/`` local.
+    """
+    for candidato in resultado["candidatos"]:  # type: ignore[union-attr]
+        with contextlib.suppress(Exception):
+            _registrar_candidato(
+                candidato, str(resultado["modelo"]), resultado, caminhos
+            )
+    print(f"[MLflow] Runs registrados: {len(resultado['candidatos'])} candidatos")  # type: ignore[arg-type]
+
+
+# --- 7) Orquestração ----------------------------------------------------------
+
+
+def treinar_e_avaliar(df: pd.DataFrame) -> dict[str, object]:
+    """Executa o ciclo completo e devolve o pacote de resultados do pipeline.
+
+    Não escreve artefatos: é a função pura/testável do pipeline. A persistência
+    fica em `main()`.
+    """
+    validar_contrato_features(df)
+    splits = separar_splits(df)
+    treino, validacao, teste = splits["treino"], splits["validacao"], splits["teste"]
+
+    X_treino, y_treino = (
+        treino[list(FEATURES_NUMERICAS + FEATURES_CATEGORICAS)],
+        treino[TARGET],
+    )
+    X_val, y_val = (
+        validacao[list(FEATURES_NUMERICAS + FEATURES_CATEGORICAS)],
+        validacao[TARGET],
+    )
+    X_teste, y_teste = (
+        teste[list(FEATURES_NUMERICAS + FEATURES_CATEGORICAS)],
+        teste[TARGET],
+    )
+
+    candidatos = construir_candidatos(_largura_onehot(X_treino))
+    resultados: list[dict[str, object]] = []
+    melhor: ModelSpec | None = None
+    melhor_lucro = -float("inf")
+
+    for spec in candidatos:
+        spec.pipeline.fit(X_treino, y_treino)
+        metricas_val = {
+            **metricas_demanda(
+                y_val.to_numpy(dtype=float), spec.pipeline.predict(X_val)
             ),
-            {'monotone_constraints': constraints_str}
-        ))
-    return specs
+            **metricas_negocio(spec.pipeline, X_val),
+        }
+        resultados.append(
+            {"modelo": spec.nome, "params": spec.params, "validacao": metricas_val}
+        )
+        print(
+            f"[validação] {spec.nome:<22} lucro={metricas_val['lucro_politica']:8.2f} "
+            f"uplift={metricas_val['uplift_pct']:6.2f}%  rmse={metricas_val['rmse']:.3f}"
+        )
+        if metricas_val["lucro_politica"] > melhor_lucro:
+            melhor_lucro = metricas_val["lucro_politica"]
+            melhor = spec
 
+    assert melhor is not None, "Nenhum modelo foi avaliado."
 
-def _simulate_expected_profit(model, X_valid: pd.DataFrame, target: str | None = None) -> float:
-    """Simula lucro esperado por linha buscando o melhor desconto até 4%.
-    Compatível com alvo em quantidade ou receita.
-    Retorna a média do lucro máximo por linha na validação.
-    """
-    if not {'preco_original','custo_producao'}.issubset(X_valid.columns):
-        return float('nan')
-    grid = np.arange(0.0, 0.0400001, 0.001)
-    best_profit = np.full(shape=(len(X_valid),), fill_value=-np.inf, dtype=float)
-    for d in grid:
-        Xd = X_valid.copy()
-        if 'desconto_pct' in Xd.columns:
-            Xd['desconto_pct'] = d
-        if 'preco_final' in Xd.columns:
-            Xd['preco_final'] = X_valid['preco_original'] * (1.0 - d)
-        preds = np.asarray(model.predict(Xd), dtype=float)
-        preco_final = X_valid['preco_original'] * (1.0 - d)
-        if target in {'receita_mes', 'receita_dia'}:
-            # Lucro = Receita - Custo total; quantidade = receita / preço
-            # profit = preds - custo_producao * (preds / preco_final)
-            # = preds * (1 - custo_producao / preco_final)
-            fator = (1.0 - (X_valid['custo_producao'] / preco_final))
-            profit_d = preds * np.asarray(fator, dtype=float)
-        else:
-            # Alvo em quantidade: lucro por unidade * quantidade
-            profit_d = (preco_final - X_valid['custo_producao']) * preds
-        best_profit = np.maximum(best_profit, profit_d.values if hasattr(profit_d, 'values') else profit_d)
-    return float(np.nanmean(best_profit))
+    # Re-ajuste do campeão em treino + validação (mais passado, mesmo teste).
+    passado = pd.concat([treino, validacao], ignore_index=True)
+    X_passado, y_passado = (
+        passado[list(FEATURES_NUMERICAS + FEATURES_CATEGORICAS)],
+        passado[TARGET],
+    )
+    melhor.pipeline.fit(X_passado, y_passado)
 
-def _simulate_expected_profit_holdout(model, X_valid: pd.DataFrame, target: str | None = None) -> float:
-    """Calcula lucro esperado em holdout usando melhor desconto por linha (0%–4%).
-    Compatível com alvo em quantidade ou receita.
-    """
-    try:
-        return _simulate_expected_profit(model, X_valid, target)
-    except Exception:
-        return float('nan')
+    metricas_teste, cenarios = _enriquecer(melhor.pipeline, teste)
+    baseline = baselines_ingenuos(passado, X_teste, y_teste.to_numpy(dtype=float))
+    importancias = importancias_por_feature(melhor.pipeline, X_passado, y_passado)
+    curva = _curva_negocio(melhor.pipeline, teste)
 
-
-def cross_validate_model(model, X: pd.DataFrame, y: pd.Series, cv, target: str | None = None):
-    rmses, maes, r2s, profits = [], [], [], []
-    for train_idx, valid_idx in cv.split(X):
-        X_train, X_valid = X.iloc[train_idx], X.iloc[valid_idx]
-        y_train, y_valid = y.iloc[train_idx], y.iloc[valid_idx]
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_valid)
-        # Compatibilidade com versões mais antigas do scikit-learn onde 'squared' não existe
-        try:
-            rmse = mean_squared_error(y_valid, y_pred, squared=False)
-        except TypeError:
-            rmse = float(np.sqrt(mean_squared_error(y_valid, y_pred)))
-        rmses.append(rmse)
-        maes.append(mean_absolute_error(y_valid, y_pred))
-        r2s.append(r2_score(y_valid, y_pred))
-        profits.append(_simulate_expected_profit(model, X_valid, target))
     return {
-        'cv_rmse_mean': float(np.mean(rmses)), 'cv_rmse_std': float(np.std(rmses)),
-        'cv_mae_mean': float(np.mean(maes)), 'cv_mae_std': float(np.std(maes)),
-        'cv_r2_mean': float(np.mean(r2s)), 'cv_r2_std': float(np.std(r2s)),
-        'cv_expected_profit_mean': float(np.mean(profits)), 'cv_expected_profit_std': float(np.std(profits)),
+        "modelo": melhor.nome,
+        "params": melhor.params,
+        "estimador": melhor.pipeline,
+        "candidatos": resultados,
+        "validacao": next(
+            r["validacao"] for r in resultados if r["modelo"] == melhor.nome
+        ),
+        "teste": metricas_teste,
+        "baselines": baseline,
+        "importancias": importancias,
+        "curva_negocio": curva,
+        "cenarios": cenarios,
+        "splits": {nome: int(len(parte)) for nome, parte in splits.items()},
+        "periodos": {
+            "treino": _periodo(treino),
+            "validacao": _periodo(validacao),
+            "teste": _periodo(teste),
+        },
+        "hash_dados": _hash_dados(passado),
     }
 
 
-def export_linear_json(model, feature_cols, target, out_path: Path):
-    intercept = getattr(model, 'intercept_', 0.0)
-    coefs = getattr(model, 'coef_', np.zeros(len(feature_cols)))
-    payload = {
-        'model_type': type(model).__name__,
-        'intercept': float(intercept),
-        'coefficients': {c: float(v) for c, v in zip(feature_cols, coefs)},
-        'target': target,
-        'features': feature_cols,
-        'preprocessing': {'scaling': 'none', 'derived': ['receita_dia','receita_mes']},
-        'inference_notes': 'Compute preco_final = preco_original * (1 - desconto_pct) before prediction.'
+def _periodo(df: pd.DataFrame) -> list[str]:
+    return [str(df["data"].min().date()), str(df["data"].max().date())]
+
+
+def _proveniencia(resultado: dict[str, object]) -> dict[str, object]:
+    return {
+        "seed": SEED,
+        "gerado_em": datetime.now(UTC).isoformat(timespec="seconds"),
+        "commit": os.getenv("GITHUB_SHA", "local"),
+        "hash_dados": resultado["hash_dados"],
+        "linhas_por_split": resultado["splits"],
+        "periodos": resultado["periodos"],
     }
-    out_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
 
 
-def main():
+def _nota_honestidade() -> str:
+    return (
+        "Métricas de demanda no teste são factuais (demanda observada vs. prevista). "
+        "O lucro da política é uma estimativa contrafactual (a demanda sob descontos "
+        "alternativos é prevista pelo modelo), não um resultado realizado; use o "
+        "baseline ingênuo como calibração do ganho esperado."
+    )
+
+
+def main() -> None:
+    """Executa o pipeline de modelagem e persiste o contrato de artefatos."""
     init_tracking()
-    df = load_dataset()
-    X, y, feature_cols, target = select_features(df)
-    # Validação temporal quando existir coluna de data
-    if 'data' in df.columns and pd.api.types.is_datetime64_any_dtype(df['data']):
-        # ordenar por tempo e sincronizar X/y
-        order = np.argsort(df['data'].fillna(pd.Timestamp.min).values)
-        X = X.iloc[order].reset_index(drop=True)
-        y = y.iloc[order].reset_index(drop=True)
-        cv = TimeSeriesSplit(n_splits=5)
-    else:
-        cv = KFold(n_splits=5, shuffle=True, random_state=42)
+    df = carregar_base_preparada()
+    resultado = treinar_e_avaliar(df)
+    estimador: Pipeline = resultado["estimador"]  # type: ignore[assignment]
 
-    results = []
-    best_profit = -float('inf')
-    best_entry = None
-    # Base do experimento (ex.: context7); usaremos experimento separado por modelo
-    exp_base = os.getenv("MLFLOW_EXPERIMENT_NAME", "max_receita_cafeterias")
-    context_label = os.getenv("CONTEXT_LABEL") or os.getenv("CONTEXT") or "default"
-    commit_sha = os.getenv("GITHUB_SHA") or os.getenv("CI_COMMIT_SHA") or "unknown"
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Limitar a 6 modelos (exclui RandomForest para manter 6 no total)
-    specs = [s for s in get_model_specs(feature_cols, target) if s.name != 'RandomForest']
-    for spec in specs:
-        # Definir experimento específico por modelo para registro separado no DagsHub/MLflow
-        exp_name_model = f"{exp_base}_{spec.name}"
-        run_id = None
-        mlflow_active = False
-        try:
-            mlflow.set_experiment(exp_name_model)
-            run_ctx = mlflow.start_run(run_name=f"{spec.name}")
-            mlflow_active = True
-        except Exception as e_mlflow:
-            warnings.warn(f"Falha ao iniciar tracking no MLflow (seguindo sem tracking remoto): {e_mlflow}")
-            try:
-                mlflow.set_tracking_uri((Path.cwd() / "mlruns").resolve().as_uri())
-                mlflow.set_experiment(exp_name_model)
-                run_ctx = mlflow.start_run(run_name=f"{spec.name}")
-                mlflow_active = True
-            except Exception:
-                run_ctx = contextlib.nullcontext()
-                mlflow_active = False
+    # (1) Modelo campeão: pipeline completo (preproc + estimador), pronto p/ serving.
+    caminho_modelo = MODELS_DIR / "best_model.pkl"
+    joblib.dump(estimador, caminho_modelo)
 
-        with run_ctx as active_run:
-            if mlflow_active and active_run is not None:
-                run_id = active_run.info.run_id
-                try:
-                    mlflow.log_params({'model': spec.name, **spec.params})
-                except Exception:
-                    pass
-            # Tags de contexto e commit para rastreamento no DagsHub/MLflow
-            try:
-                mlflow.set_tag('context', context_label)
-                mlflow.set_tag('commit_sha', commit_sha)
-                mlflow.set_tag('experiment', exp_name_model)
-            except Exception:
-                pass
-            metrics = cross_validate_model(spec.estimator, X, y, cv, target)
-            # Aliases compatíveis com testes: cv_rmse, cv_mae, cv_r2
-            metrics_with_alias = {
-                **metrics,
-                'cv_rmse': metrics.get('cv_rmse_mean'),
-                'cv_mae': metrics.get('cv_mae_mean'),
-                'cv_r2': metrics.get('cv_r2_mean'),
-            }
-            try:
-                mlflow.log_metrics(metrics_with_alias)
-            except Exception:
-                pass
+    # (2) Snapshot de métricas (contrato consumido por testes, site e app).
+    metricas = {
+        "alvo": TARGET,
+        "modelo": resultado["modelo"],
+        "validacao": resultado["validacao"],
+        "teste": resultado["teste"],
+        "baselines": resultado["baselines"],
+        "candidatos": resultado["candidatos"],
+        "proveniencia": _proveniencia(resultado),
+        "honestidade": _nota_honestidade(),
+    }
+    caminho_metricas = MODELS_DIR / "metrics_snapshot.json"
+    caminho_metricas.write_text(
+        json.dumps(metricas, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
-            # Fit/holdout metrics
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-            spec.estimator.fit(X_train, y_train)
-            y_pred = spec.estimator.predict(X_test)
-            try:
-                rmse_holdout = mean_squared_error(y_test, y_pred, squared=False)
-            except TypeError:
-                rmse_holdout = float(np.sqrt(mean_squared_error(y_test, y_pred)))
-            holdout = {
-                'rmse': float(rmse_holdout),
-                'r2': float(r2_score(y_test, y_pred)),
-                'mae': float(mean_absolute_error(y_test, y_pred)),
-                # Métrica de negócio principal: lucro esperado médio em holdout
-                'expected_profit': float(_simulate_expected_profit_holdout(spec.estimator, X_test, target)),
-            }
-            try:
-                mlflow.log_metrics({f"holdout_{k}": v for k, v in holdout.items()})
-            except Exception:
-                pass
+    # (3) Cartão de modelo: esquema de features e como reusar (Fase 4 / app).
+    cartao = {
+        "alvo": TARGET,
+        "modelo": resultado["modelo"],
+        "objetivo": "Escolher, por SKU/dia, o desconto que maximiza o lucro esperado.",
+        "features_numericas": list(FEATURES_NUMERICAS),
+        "features_categoricas": list(FEATURES_CATEGORICAS),
+        "colunas_vetadas_por_vazamento": list(colunas_com_vazamento()),
+        "grade_desconto": [float(d) for d in GRADE_DESCONTO],
+        "restricao_preco_minimo": "Otimizador respeita `preco_minimo` por linha.",
+        "importancia_features": resultado["importancias"],
+        "metricas_teste": resultado["teste"],
+        "honestidade": _nota_honestidade(),
+        "proveniencia": _proveniencia(resultado),
+    }
+    caminho_cartao = MODELS_DIR / "model_card.json"
+    caminho_cartao.write_text(
+        json.dumps(cartao, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
-            # Persist model locally
-            local_model_path = MODELS_DIR / f"{spec.name}.pkl"
-            try:
-                import joblib
-                joblib.dump(spec.estimator, local_model_path)
-                mlflow.log_artifact(str(local_model_path))
-            except Exception:
-                pass
+    # (4) Curva de negócio (desconto -> demanda/receita/lucro) para o site/app.
+    caminho_curva = MODELS_DIR / "business_curve.csv"
+    resultado["curva_negocio"].to_csv(caminho_curva, index=False)  # type: ignore[union-attr]
 
-            entry = {
-                'name': spec.name,
-                'metrics': {**metrics_with_alias, **{f"holdout_{k}": v for k, v in holdout.items()}},
-                'model_path': str(local_model_path),
-                'estimator': spec.estimator,
-                'run_id': run_id,
-            }
-            results.append(entry)
+    # (5) Cenários por linha no teste (diagnóstico honesto do notebook 05).
+    caminho_cenarios = MODELS_DIR / "test_predictions.parquet"
+    resultado["cenarios"].to_parquet(caminho_cenarios, index=False)  # type: ignore[union-attr]
 
-            # Seleção por lucro esperado médio em HOLDOUT (mais robusto)
-            holdout_profit = holdout.get('expected_profit', -float('inf'))
-            if holdout_profit > best_profit:
-                best_profit = holdout_profit
-                best_entry = entry
+    # (6) Tracking: um run por candidato no MLflow/DagsHub, campeão = model_best.
+    registrar_experimentos(
+        resultado,
+        [
+            caminho_modelo,
+            caminho_metricas,
+            caminho_cartao,
+            caminho_curva,
+            caminho_cenarios,
+        ],
+    )
 
-            try:
-                mlflow.set_tag('selection_metric', 'holdout_expected_profit')
-            except Exception:
-                pass
-
-    assert best_entry is not None, "Nenhum modelo foi avaliado."
-
-    # Salvar melhor modelo
-    best_label = best_entry['name']
-    best_model = best_entry['estimator']
-    best_out = MODELS_DIR / 'best_model_max_receita.pkl'
-    import joblib
-    joblib.dump(best_model, best_out)
-    try:
-        mlflow.log_artifact(str(best_out))
-    except Exception:
-        pass
-
-    # Exportar JSON para UI: se melhor for linear, exporta; caso contrário, exporta LinearRegression como baseline
-    json_target_path = MODELS_DIR / 'model_linear.json'
-    if isinstance(best_model, (LinearRegression, RidgeCV, LassoCV, ElasticNetCV)):
-        export_linear_json(best_model, feature_cols, target, json_target_path)
-    else:
-        # Treinar baseline linear para inferência no front-end
-        baseline = LinearRegression().fit(X, y)
-        export_linear_json(baseline, feature_cols, target, json_target_path)
-    try:
-        mlflow.log_artifact(str(json_target_path))
-    except Exception:
-        pass
-
-    # Artefato: curva média de receita/lucro vs desconto
-    try:
-        discounts = np.arange(0.0, 0.0400001, 0.001)
-        rows = []
-        for d in discounts:
-            Xd = X.copy()
-            if 'desconto_pct' in Xd.columns:
-                Xd['desconto_pct'] = d
-            if 'preco_final' in Xd.columns:
-                Xd['preco_final'] = X['preco_original'] * (1.0 - d)
-            qty = np.asarray(best_model.predict(Xd), dtype=float)
-            price = X['preco_original'] * (1.0 - d)
-            revenue = price * qty
-            profit = (price - X['custo_producao']) * qty
-            rows.append({
-                'desconto_pct': d,
-                'mean_quantity': float(np.mean(qty)),
-                'mean_revenue': float(np.mean(revenue)),
-                'mean_profit': float(np.mean(profit)),
-            })
-        curve_models_path = MODELS_DIR / 'curve_business_metric.csv'
-        pd.DataFrame(rows).to_csv(curve_models_path, index=False)
-        mlflow.log_artifact(str(curve_models_path))
-        # Também publicar em docs/ para uso pelo site
-        try:
-            docs_dir = PROJECT_ROOT / 'docs'
-            docs_dir.mkdir(exist_ok=True)
-            curve_docs_path = docs_dir / 'curve_business_metric.csv'
-            pd.DataFrame(rows).to_csv(curve_docs_path, index=False)
-        except Exception as e_pub:
-            warnings.warn(f"Falha ao publicar curva em docs/: {e_pub}")
-    except Exception as e:
-        warnings.warn(f"Falha ao gerar curva de negócio: {e}")
-
-    # Marcar o run do melhor modelo com tags para visibilidade no DagsHub/MLflow
-    try:
-        from mlflow.tracking import MlflowClient
-        if best_entry and best_entry.get('run_id'):
-            client = MlflowClient()
-            client.set_tag(best_entry['run_id'], 'is_best', 'true')
-            client.set_tag(best_entry['run_id'], 'best_model', best_entry['name'])
-            # Também registrar o melhor como runName claro
-            client.set_tag(best_entry['run_id'], 'mlflow.runName', f"best_model_{best_entry['name']}")
-            # Propagar contexto ao melhor run
-            try:
-                client.set_tag(best_entry['run_id'], 'context', context_label)
-                client.set_tag(best_entry['run_id'], 'commit_sha', commit_sha)
-            except Exception:
-                pass
-    except Exception as e_tag:
-        warnings.warn(f"Falha ao marcar tags do best_model no MLflow: {e_tag}")
-
-    # Métrica do melhor modelo
-    best_metrics = best_entry['metrics']
-    # Snapshot de métricas para testes (consumido por tests/expected_metrics.json)
-    try:
-        snapshot = {
-            'best_model': best_label,
-            'best_model_name': best_label,
-            'feature_order': feature_cols,
-            'target': target,
-            'metrics': best_metrics,
-        }
-        snapshot_path = MODELS_DIR / 'metrics_snapshot.json'
-        snapshot_path.write_text(json.dumps(snapshot, indent=2), encoding='utf-8')
-        try:
-            mlflow.log_artifact(str(snapshot_path))
-        except Exception:
-            pass
-    except Exception as e:
-        warnings.warn(f"Falha ao salvar metrics_snapshot.json: {e}")
-    print(f"Melhor modelo: {best_label}\nMétricas: {best_metrics}\nExport JSON: {json_target_path}")
-
-    # SHAP: explicabilidade para modelos de árvore; para lineares já há coeficientes
-    try:
-        explainer = None
-        model_for_shap = best_model
-        if isinstance(best_model, Pipeline):
-            # tenta obter o estimador final
-            try:
-                model_for_shap = best_model.named_steps.get('model', best_model)
-            except Exception:
-                model_for_shap = best_model
-        if HAS_SHAP and shap is not None and (isinstance(model_for_shap, (RandomForestRegressor, GradientBoostingRegressor)) or type(model_for_shap).__name__ == 'XGBRegressor'):
-            # Amostra para desempenho
-            X_sample = X.sample(n=min(1000, len(X)), random_state=42)
-            # Usa os dados no espaço original; alguns pipelines podem exigir transform
-            explainer = shap.TreeExplainer(best_model)
-            shap_values = explainer.shap_values(X_sample)
-            plt.figure(figsize=(10, 6))
-            shap.summary_plot(shap_values, X_sample, plot_type='bar', show=False)
-            shap_path = MODELS_DIR / 'shap_summary.png'
-            plt.tight_layout()
-            plt.savefig(shap_path, dpi=140)
-            plt.close()
-            mlflow.log_artifact(str(shap_path))
-    except Exception as e:
-        warnings.warn(f"Falha ao gerar SHAP: {e}")
-
-    # Exportar ONNX do best model e publicar em docs
-    try:
-        # Evita export ONNX para XGBoost, que possui suporte instável no ambiente CI
-        if type(best_model).__name__ == 'XGBRegressor':
-            raise RuntimeError('Export ONNX desativado para XGBRegressor')
-        from skl2onnx import convert_sklearn  # type: ignore
-        from skl2onnx.common.data_types import FloatTensorType  # type: ignore
-        onnx_out_models = MODELS_DIR / 'model_best.onnx'
-        initial_type = [('float_input', FloatTensorType([None, len(feature_cols)]))]
-        onnx_model = convert_sklearn(best_model, initial_types=initial_type)
-        with open(onnx_out_models, 'wb') as f:
-            f.write(onnx_model.SerializeToString())
-        # Meta: ordem das features
-        meta = {
-            'features': feature_cols,
-            'target': target,
-            'model_name': best_label,
-        }
-        meta_models_path = MODELS_DIR / 'model_best_meta.json'
-        meta_models_path.write_text(json.dumps(meta, indent=2), encoding='utf-8')
-        try:
-            mlflow.log_artifact(str(onnx_out_models))
-            mlflow.log_artifact(str(meta_models_path))
-        except Exception:
-            pass
-        # Publicar também em docs/
-        try:
-            docs_dir = PROJECT_ROOT / 'docs'
-            docs_dir.mkdir(exist_ok=True)
-            onnx_out_docs = docs_dir / 'model_best.onnx'
-            with open(onnx_out_docs, 'wb') as f:
-                f.write(onnx_model.SerializeToString())
-            meta_docs_path = docs_dir / 'model_best_meta.json'
-            meta_docs_path.write_text(json.dumps(meta, indent=2), encoding='utf-8')
-        except Exception as e_pub:
-            warnings.warn(f"Falha ao publicar ONNX/meta em docs/: {e_pub}")
-    except Exception as e1:
-        warnings.warn(f"Falha ao converter best model para ONNX via skl2onnx: {e1}")
-        # Tentativa alternativa para XGBoost
-        # Desiste para XGBoost: manter modelo em pickle e JSON linear como fallback para UI
-        pass
+    print(
+        f"\nCampeão: {resultado['modelo']}\n"
+        f"Teste (demanda): rmse={resultado['teste']['rmse']:.3f} "
+        f"mae={resultado['teste']['mae']:.3f} r2={resultado['teste']['r2']:.3f}\n"
+        f"Teste (negócio): uplift={resultado['teste']['uplift_pct']:.2f}% "
+        f"desconto médio={resultado['teste']['desconto_medio']:.3f}\n"
+        f"Artefatos em: {MODELS_DIR}"
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

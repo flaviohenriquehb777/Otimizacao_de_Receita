@@ -10,17 +10,24 @@ Preparation* existe para:
    consistência aritmética (ex.: `preco_final == preco_original * (1 - desconto)`).
 2. **Padronizar tipos e derivar features** de forma determinística e testável,
    em vez de espalhar lógica por células de notebook.
-3. **Prevenir vazamento de dados (data leakage)**: expor explicitamente quais
-   colunas são agregadas do próprio dia-alvo e **não** devem entrar como
-   preditoras, além de materializar o **split temporal estrito** dentro do
-   próprio dataset.
+3. **Prevenir vazamento de dados (data leakage)**: expor explicitamente as
+   colunas que carregam sinal do alvo (agregados e desfechos) e **não** devem
+   entrar como preditoras, além de materializar o **split temporal estrito**
+   dentro do próprio dataset.
 
 Guardrail de vazamento
 ----------------------
-`quantidade_vendida_mes` é um agregado que inclui o próprio dia (somado por mês,
-loja e produto). Usá-lo para prever `quantidade_vendida_dia`/`receita_dia` é
-vazamento. Este módulo o mantém na base (para relatórios) porém o lista em
-`colunas_com_vazamento()` e o exclui de `selecionar_features()` por padrão.
+Uma auditoria com detector de 1 feature (R² de um modelo linear de uma variável
+sobre o alvo) confirmou **quatro** colunas que carregam sinal do alvo
+`quantidade_vendida_dia` e, por isso, são vetadas como preditoras:
+
+* `quantidade_vendida_mes` — agregado do mês que inclui o próprio dia (vaza alvo e futuro).
+* `estoque_disponivel` — derivado da demanda realizada no dia (R² = 0,95).
+* `ruptura_flag` — consequência da demanda vs. estoque do dia (97,8% reconstruível).
+* `custo_marketing_unitario` — `gasto_marketing / quantidade` (identidade exata).
+
+Elas permanecem na base para relatórios e auditoria, porém são listadas em
+`colunas_com_vazamento()` e excluídas de `selecionar_features()` por padrão.
 
 Reprodutibilidade
 -----------------
@@ -46,8 +53,28 @@ SAIDA_PARQUET = DADOS_CAFETERIAS_PREPARADO
 DATA_CORTE_TREINO = "2025-06-30"  # <= treino
 DATA_CORTE_VALIDACAO = "2025-09-30"  # (treino, validação]; teste = > validação
 
-# Colunas que agregam o próprio dia-alvo e, portanto, vazam sinal do alvo.
-_COLUNAS_VAZAMENTO: tuple[str, ...] = ("quantidade_vendida_mes",)
+# Colunas que carregam sinal do alvo e, portanto, **nunca** podem ser preditoras.
+#
+# A auditoria da base (detector de 1 feature, isto é, R² de um modelo linear com
+# uma única variável sobre o alvo) revelou três fontes distintas de vazamento:
+#
+# 1. Agregado temporal que inclui o próprio dia-alvo:
+#    - `quantidade_vendida_mes` — soma do mês inteiro (passado **e** futuro) do
+#      mesmo (mês, loja, produto). R² = 0,73. Vaza alvo **e** futuro.
+# 2. Variáveis derivadas da demanda realizada no próprio dia:
+#    - `estoque_disponivel`     — gerado como `demanda × uniform(0,85; 1,65)`. R² = 0,95.
+#    - `ruptura_flag`           — `estoque < quantidade` (consequência da demanda); 97,8% reconstruível.
+#    - `custo_marketing_unitario` — `gasto_marketing / quantidade` (identidade exata). R² = 0,30.
+#
+# Em dados transacionais reais estas colunas existem como **desfecho** do dia, não
+# como insumo da decisão de preço — que ocorre *antes* do dia. Mantemo-las na base
+# para relatórios/auditoria, mas fora das features.
+_COLUNAS_VAZAMENTO: tuple[str, ...] = (
+    "quantidade_vendida_mes",
+    "estoque_disponivel",
+    "custo_marketing_unitario",
+    "ruptura_flag",
+)
 
 # Colunas obrigatórias no dataset bruto.
 _COLUNAS_OBRIGATORIAS: tuple[str, ...] = (
@@ -165,7 +192,9 @@ def limpar_dados(df: pd.DataFrame) -> pd.DataFrame:
         if df[col].isna().any():
             df[col] = df[col].fillna(df[col].median())
 
-    df["quantidade_vendida_dia"] = df["quantidade_vendida_dia"].fillna(0).astype("int64")
+    df["quantidade_vendida_dia"] = (
+        df["quantidade_vendida_dia"].fillna(0).astype("int64")
+    )
 
     # Categóricos: nulos viram rótulo explícito (não quebra one-hot/modelo).
     for col in ("evento_especial", "promocao_tipo", "campanha_id"):
@@ -209,7 +238,7 @@ def engenharia_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def colunas_com_vazamento() -> tuple[str, ...]:
-    """Colunas agregadas do próprio dia-alvo que **nunca** devem ser features."""
+    """Colunas que carregam sinal do alvo (agregado/desfecho) — nunca features."""
     return _COLUNAS_VAZAMENTO
 
 
@@ -253,15 +282,17 @@ def marcar_split_temporal(
         df["data"] <= corte_treino_ts,
         df["data"] <= corte_validacao_ts,
     ]
-    df["split"] = np.select(
-        condicoes, ["treino", "validacao"], default="teste"
-    ).astype(str)
+    df["split"] = np.select(condicoes, ["treino", "validacao"], default="teste").astype(
+        str
+    )
     return df
 
 
 def resumo_qualidade(df: pd.DataFrame) -> dict[str, object]:
     """Resume a qualidade e a distribuição temporal da base preparada."""
-    receita_total = float(df["receita_dia"].sum()) if "receita_dia" in df else float("nan")
+    receita_total = (
+        float(df["receita_dia"].sum()) if "receita_dia" in df else float("nan")
+    )
     nulos = df.isna().sum()
     nulos_intencionais = int(nulos.reindex(_COLUNAS_NULAS_INTENCIONAIS).fillna(0).sum())
     return {

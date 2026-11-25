@@ -49,13 +49,33 @@ ESCALA_DEMANDA = 0.71
 # Feriados nacionais brasileiros com efeito relevante sobre o consumo de festa.
 _FERIADOS = {
     # 2024
-    "2024-01-01", "2024-02-12", "2024-02-13", "2024-03-29", "2024-04-21",
-    "2024-05-01", "2024-05-30", "2024-09-07", "2024-10-12", "2024-11-02",
-    "2024-11-15", "2024-11-20", "2024-12-25",
+    "2024-01-01",
+    "2024-02-12",
+    "2024-02-13",
+    "2024-03-29",
+    "2024-04-21",
+    "2024-05-01",
+    "2024-05-30",
+    "2024-09-07",
+    "2024-10-12",
+    "2024-11-02",
+    "2024-11-15",
+    "2024-11-20",
+    "2024-12-25",
     # 2025
-    "2025-01-01", "2025-03-03", "2025-03-04", "2025-04-18", "2025-04-21",
-    "2025-05-01", "2025-06-19", "2025-09-07", "2025-10-12", "2025-11-02",
-    "2025-11-15", "2025-11-20", "2025-12-25",
+    "2025-01-01",
+    "2025-03-03",
+    "2025-03-04",
+    "2025-04-18",
+    "2025-04-21",
+    "2025-05-01",
+    "2025-06-19",
+    "2025-09-07",
+    "2025-10-12",
+    "2025-11-02",
+    "2025-11-15",
+    "2025-11-20",
+    "2025-12-25",
 }
 
 
@@ -68,39 +88,212 @@ class Produto:
     tipo_produto: str
     tamanho_embalagem: str
     preco_original: float
-    custo_ratio: float          # custo de produção como fração do preço
-    elasticidade: float         # elasticidade-preço da demanda (negativa)
-    base_demanda: float         # unidades/dia por unidade de referência
+    custo_ratio: float  # custo de produção como fração do preço
+    elasticidade: float  # elasticidade-preço da demanda (negativa)
+    base_demanda: float  # unidades/dia por unidade de referência
 
 
 # Catálogo (preços reais convertidos para rótulos genéricos).
 CATALOGO: tuple[Produto, ...] = (
     # Linha de tortas — três faixas e cinco tamanhos por faixa.
-    Produto("Torta Standard 10 fatias", "Torta", "Torta", "10 fatias", 115.0, 0.35, -1.20, 3.2),
-    Produto("Torta Standard 20 fatias", "Torta", "Torta", "20 fatias", 169.0, 0.35, -1.20, 2.1),
-    Produto("Torta Standard 30 fatias", "Torta", "Torta", "30 fatias", 249.0, 0.35, -1.18, 1.4),
-    Produto("Torta Standard 40 fatias", "Torta", "Torta", "40 fatias", 297.0, 0.35, -1.15, 0.9),
-    Produto("Torta Standard 60 fatias", "Torta", "Torta", "60 fatias", 469.0, 0.35, -1.10, 0.4),
-    Produto("Torta Premium 10 fatias", "Torta", "Torta", "10 fatias", 139.0, 0.38, -1.25, 2.0),
-    Produto("Torta Premium 20 fatias", "Torta", "Torta", "20 fatias", 209.0, 0.38, -1.25, 1.3),
-    Produto("Torta Premium 30 fatias", "Torta", "Torta", "30 fatias", 287.0, 0.38, -1.22, 0.9),
-    Produto("Torta Premium 40 fatias", "Torta", "Torta", "40 fatias", 369.0, 0.38, -1.20, 0.6),
-    Produto("Torta Premium 60 fatias", "Torta", "Torta", "60 fatias", 497.0, 0.38, -1.15, 0.3),
-    Produto("Torta com Frutas 10 fatias", "Torta", "Torta", "10 fatias", 159.0, 0.42, -1.30, 1.8),
-    Produto("Torta com Frutas 20 fatias", "Torta", "Torta", "20 fatias", 219.0, 0.42, -1.30, 1.2),
-    Produto("Torta com Frutas 30 fatias", "Torta", "Torta", "30 fatias", 297.0, 0.42, -1.28, 0.8),
-    Produto("Torta com Frutas 40 fatias", "Torta", "Torta", "40 fatias", 369.0, 0.42, -1.25, 0.5),
-    Produto("Torta com Frutas 60 fatias", "Torta", "Torta", "60 fatias", 519.0, 0.42, -1.20, 0.25),
+    Produto(
+        "Torta Standard 10 fatias",
+        "Torta",
+        "Torta",
+        "10 fatias",
+        115.0,
+        0.35,
+        -1.20,
+        3.2,
+    ),
+    Produto(
+        "Torta Standard 20 fatias",
+        "Torta",
+        "Torta",
+        "20 fatias",
+        169.0,
+        0.35,
+        -1.20,
+        2.1,
+    ),
+    Produto(
+        "Torta Standard 30 fatias",
+        "Torta",
+        "Torta",
+        "30 fatias",
+        249.0,
+        0.35,
+        -1.18,
+        1.4,
+    ),
+    Produto(
+        "Torta Standard 40 fatias",
+        "Torta",
+        "Torta",
+        "40 fatias",
+        297.0,
+        0.35,
+        -1.15,
+        0.9,
+    ),
+    Produto(
+        "Torta Standard 60 fatias",
+        "Torta",
+        "Torta",
+        "60 fatias",
+        469.0,
+        0.35,
+        -1.10,
+        0.4,
+    ),
+    Produto(
+        "Torta Premium 10 fatias",
+        "Torta",
+        "Torta",
+        "10 fatias",
+        139.0,
+        0.38,
+        -1.25,
+        2.0,
+    ),
+    Produto(
+        "Torta Premium 20 fatias",
+        "Torta",
+        "Torta",
+        "20 fatias",
+        209.0,
+        0.38,
+        -1.25,
+        1.3,
+    ),
+    Produto(
+        "Torta Premium 30 fatias",
+        "Torta",
+        "Torta",
+        "30 fatias",
+        287.0,
+        0.38,
+        -1.22,
+        0.9,
+    ),
+    Produto(
+        "Torta Premium 40 fatias",
+        "Torta",
+        "Torta",
+        "40 fatias",
+        369.0,
+        0.38,
+        -1.20,
+        0.6,
+    ),
+    Produto(
+        "Torta Premium 60 fatias",
+        "Torta",
+        "Torta",
+        "60 fatias",
+        497.0,
+        0.38,
+        -1.15,
+        0.3,
+    ),
+    Produto(
+        "Torta com Frutas 10 fatias",
+        "Torta",
+        "Torta",
+        "10 fatias",
+        159.0,
+        0.42,
+        -1.30,
+        1.8,
+    ),
+    Produto(
+        "Torta com Frutas 20 fatias",
+        "Torta",
+        "Torta",
+        "20 fatias",
+        219.0,
+        0.42,
+        -1.30,
+        1.2,
+    ),
+    Produto(
+        "Torta com Frutas 30 fatias",
+        "Torta",
+        "Torta",
+        "30 fatias",
+        297.0,
+        0.42,
+        -1.28,
+        0.8,
+    ),
+    Produto(
+        "Torta com Frutas 40 fatias",
+        "Torta",
+        "Torta",
+        "40 fatias",
+        369.0,
+        0.42,
+        -1.25,
+        0.5,
+    ),
+    Produto(
+        "Torta com Frutas 60 fatias",
+        "Torta",
+        "Torta",
+        "60 fatias",
+        519.0,
+        0.42,
+        -1.20,
+        0.25,
+    ),
     # Consumo imediato.
-    Produto("Mini Cake Individual", "Torta", "Mini Cake", "individual", 49.9, 0.32, -1.05, 6.0),
+    Produto(
+        "Mini Cake Individual",
+        "Torta",
+        "Mini Cake",
+        "individual",
+        49.9,
+        0.32,
+        -1.05,
+        6.0,
+    ),
     Produto("Fatia de Torta", "Torta", "Fatia", "individual", 24.0, 0.34, -1.40, 9.0),
     # Linha salgada.
-    Produto("Empadao Congelado 1,2 kg", "Salgado", "Empadao", "1,2 kg", 98.0, 0.40, -1.10, 1.1),
+    Produto(
+        "Empadao Congelado 1,2 kg",
+        "Salgado",
+        "Empadao",
+        "1,2 kg",
+        98.0,
+        0.40,
+        -1.10,
+        1.1,
+    ),
     Produto("Quiche Base 500 g", "Salgado", "Quiche", "500 g", 38.0, 0.38, -1.15, 2.2),
-    Produto("Salgadinho Frito (cento)", "Salgado", "Salgadinho", "cento", 129.0, 0.42, -1.12, 1.6),
-    Produto("Salgadinho Assado (cento)", "Salgado", "Salgadinho", "cento", 189.0, 0.42, -1.12, 1.0),
+    Produto(
+        "Salgadinho Frito (cento)",
+        "Salgado",
+        "Salgadinho",
+        "cento",
+        129.0,
+        0.42,
+        -1.12,
+        1.6,
+    ),
+    Produto(
+        "Salgadinho Assado (cento)",
+        "Salgado",
+        "Salgadinho",
+        "cento",
+        189.0,
+        0.42,
+        -1.12,
+        1.0,
+    ),
     # Doces de festa e kits.
-    Produto("Docinho de Festa (cento)", "Doce", "Docinho", "cento", 240.0, 0.30, -1.30, 1.2),
+    Produto(
+        "Docinho de Festa (cento)", "Doce", "Docinho", "cento", 240.0, 0.30, -1.30, 1.2
+    ),
     Produto("Kit Festa 2", "Kit", "Kit", "kit", 379.0, 0.36, -0.95, 0.7),
     Produto("Kit Docura 3", "Kit", "Kit", "kit", 389.0, 0.34, -0.95, 0.5),
 )
@@ -114,18 +307,24 @@ class Loja:
     regiao: str
     bairro: str
     perfil_loja: str
-    fator_demanda: float                  # escala de demanda relativa
+    fator_demanda: float  # escala de demanda relativa
     mix_canal: tuple[tuple[str, float], ...]  # canal -> probabilidade
 
 
 LOJAS: tuple[Loja, ...] = (
     Loja(
-        "Unidade A", "Regiao A", "Bairro A", "Shopping",
+        "Unidade A",
+        "Regiao A",
+        "Bairro A",
+        "Shopping",
         fator_demanda=1.35,
         mix_canal=(("Delivery", 0.45), ("Balcao", 0.35), ("Mesa", 0.20)),
     ),
     Loja(
-        "Unidade B", "Regiao B", "Bairro B", "Rua",
+        "Unidade B",
+        "Regiao B",
+        "Bairro B",
+        "Rua",
         fator_demanda=1.00,
         mix_canal=(("Balcao", 0.40), ("Delivery", 0.35), ("Mesa", 0.25)),
     ),
@@ -133,15 +332,34 @@ LOJAS: tuple[Loja, ...] = (
 
 # Clima médio mensal (litoral sudeste): (temperatura media, chuva media em mm).
 _CLIMA_MENSAL = {
-    1: (27.5, 5.5), 2: (28.0, 4.5), 3: (27.0, 5.0), 4: (25.5, 4.0),
-    5: (23.5, 3.2), 6: (22.0, 2.2), 7: (21.5, 2.0), 8: (22.0, 2.0),
-    9: (22.5, 3.0), 10: (23.5, 4.0), 11: (24.5, 4.8), 12: (26.5, 5.5),
+    1: (27.5, 5.5),
+    2: (28.0, 4.5),
+    3: (27.0, 5.0),
+    4: (25.5, 4.0),
+    5: (23.5, 3.2),
+    6: (22.0, 2.2),
+    7: (21.5, 2.0),
+    8: (22.0, 2.0),
+    9: (22.5, 3.0),
+    10: (23.5, 4.0),
+    11: (24.5, 4.8),
+    12: (26.5, 5.5),
 }
 
 # Sazonalidade festiva (multiplicador de demanda por mês).
 _SAZONALIDADE_MES = {
-    1: 0.95, 2: 0.95, 3: 1.00, 4: 1.05, 5: 1.15, 6: 1.10,
-    7: 1.00, 8: 1.05, 9: 0.95, 10: 1.10, 11: 1.10, 12: 1.35,
+    1: 0.95,
+    2: 0.95,
+    3: 1.00,
+    4: 1.05,
+    5: 1.15,
+    6: 1.10,
+    7: 1.00,
+    8: 1.05,
+    9: 0.95,
+    10: 1.10,
+    11: 1.10,
+    12: 1.35,
 }
 
 # Multiplicador por dia da semana (0 = segunda).
@@ -149,7 +367,10 @@ _SAZONALIDADE_DIA = {0: 0.90, 1: 0.90, 2: 0.95, 3: 1.00, 4: 1.20, 5: 1.40, 6: 1.
 
 # Eventos sazonais de-identificados (mês -> rótulo do evento).
 _EVENTOS_MES = {
-    4: "Pascoa", 5: "Dia das Maes", 6: "Festa Junina", 12: "Festas de Fim de Ano",
+    4: "Pascoa",
+    5: "Dia das Maes",
+    6: "Festa Junina",
+    12: "Festas de Fim de Ano",
 }
 
 
@@ -186,7 +407,9 @@ def _gerar_calendario() -> pd.DataFrame:
             "chuva_mm": np.round(chuva, 1),
         }
     )
-    cal["feriado_flag"] = cal["data"].dt.strftime("%Y-%m-%d").isin(_FERIADOS).astype(int)
+    cal["feriado_flag"] = (
+        cal["data"].dt.strftime("%Y-%m-%d").isin(_FERIADOS).astype(int)
+    )
     cal["evento_especial"] = cal["mes"].map(_EVENTOS_MES)
     cal["sazonal"] = cal["mes"].map(_SAZONALIDADE_MES) * cal["dia_semana_idx"].map(
         _SAZONALIDADE_DIA
@@ -200,17 +423,16 @@ def _gerar_calendario() -> pd.DataFrame:
 def _promocao_ativa(data: pd.Timestamp, loja: Loja, produto: Produto) -> str | None:
     """Retorna o tipo de promoção vigente para (data, loja, produto)."""
     descontos = _descontos_item_do_mes()
-    # "Dose dupla": leve 2, pague 1 — apenas na fatia, em quintas específicas.
-    if produto.tipo_produto == "Fatia":
-        # Penúltima quinta do mês na Unidade B; última quinta na Unidade A.
-        if data.dayofweek == 3:
-            quintas = pd.date_range(
-                data.replace(day=1), data + pd.offsets.MonthEnd(0), freq="W-THU"
-            )
-            if loja.nome == "Unidade A" and len(quintas) and data == quintas[-1]:
-                return "Dose Dupla"
-            if loja.nome == "Unidade B" and len(quintas) >= 2 and data == quintas[-2]:
-                return "Dose Dupla"
+    # "Dose dupla": leve 2, pague 1 — apenas na fatia, em quintas específicas
+    # (penúltima quinta do mês na Unidade B; última quinta na Unidade A).
+    if produto.tipo_produto == "Fatia" and data.dayofweek == 3:
+        quintas = pd.date_range(
+            data.replace(day=1), data + pd.offsets.MonthEnd(0), freq="W-THU"
+        )
+        if loja.nome == "Unidade A" and len(quintas) and data == quintas[-1]:
+            return "Dose Dupla"
+        if loja.nome == "Unidade B" and len(quintas) >= 2 and data == quintas[-2]:
+            return "Dose Dupla"
     # "Item do mes": desconto mensal em uma unica linha de torta (rotativa).
     if (
         produto.categoria == "Torta"
@@ -221,7 +443,9 @@ def _promocao_ativa(data: pd.Timestamp, loja: Loja, produto: Produto) -> str | N
     return None
 
 
-def _desconto_efetivo(promo: str | None, produto: Produto, rng: np.random.Generator) -> float:
+def _desconto_efetivo(
+    promo: str | None, produto: Produto, rng: np.random.Generator
+) -> float:
     """Percentual de desconto aplicado ao preço de tabela."""
     if promo == "Dose Dupla":
         return 0.50  # equivalente a leve 2, pague 1
@@ -241,7 +465,7 @@ def gerar_dataset() -> pd.DataFrame:
 
     registros: list[dict[str, object]] = []
     for loja in LOJAS:
-        canais, probs = zip(*loja.mix_canal)
+        canais, probs = zip(*loja.mix_canal, strict=False)
         for produto in CATALOGO:
             preco_ref = produto.preco_original
             base = produto.base_demanda * loja.fator_demanda * ESCALA_DEMANDA
@@ -259,7 +483,14 @@ def gerar_dataset() -> pd.DataFrame:
                 lift_preco = (preco_final / preco_ref) ** produto.elasticidade
                 lift_promo = 1.75 if promo == "Dose Dupla" else (1.30 if promo else 1.0)
                 ruido = float(rng.lognormal(mean=0.0, sigma=0.18))
-                demanda = base * lift_preco * linha.sazonal * linha.clima_lift * lift_promo * ruido
+                demanda = (
+                    base
+                    * lift_preco
+                    * linha.sazonal
+                    * linha.clima_lift
+                    * lift_promo
+                    * ruido
+                )
                 if linha.feriado_flag:
                     demanda *= 1.12
 
@@ -270,14 +501,20 @@ def gerar_dataset() -> pd.DataFrame:
                     quantidade = int(round(estoque * 0.9))
                 quantidade = max(quantidade, 0)
 
-                custo = round(preco_ref * produto.custo_ratio * rng.uniform(0.95, 1.05), 2)
+                custo = round(
+                    preco_ref * produto.custo_ratio * rng.uniform(0.95, 1.05), 2
+                )
                 preco_competidor = round(preco_ref * rng.uniform(0.90, 1.16), 2)
                 margem_minima = float(np.round(rng.uniform(0.25, 0.40), 3))
                 gasto_marketing = round(
                     rng.uniform(400.0, 1200.0) * (1.6 if promo else 1.0), 2
                 )
                 custo_logistico = round(
-                    rng.uniform(4.0, 9.0) if loja.perfil_loja == "Shopping" else rng.uniform(3.0, 7.0),
+                    (
+                        rng.uniform(4.0, 9.0)
+                        if loja.perfil_loja == "Shopping"
+                        else rng.uniform(3.0, 7.0)
+                    ),
                     2,
                 )
                 registros.append(
@@ -298,11 +535,13 @@ def gerar_dataset() -> pd.DataFrame:
                         "promocao_flag": int(promo is not None),
                         "promocao_tipo": promo,
                         "promocao_inicio": (
-                            data.replace(day=1) if promo == "Item do Mes"
+                            data.replace(day=1)
+                            if promo == "Item do Mes"
                             else (data if promo else pd.NaT)
                         ),
                         "promocao_fim": (
-                            data + pd.offsets.MonthEnd(0) if promo == "Item do Mes"
+                            data + pd.offsets.MonthEnd(0)
+                            if promo == "Item do Mes"
                             else (data if promo else pd.NaT)
                         ),
                         "canal": str(rng.choice(canais, p=probs)),
@@ -313,7 +552,9 @@ def gerar_dataset() -> pd.DataFrame:
                         "tamanho_embalagem": produto.tamanho_embalagem,
                         "tipo_produto": produto.tipo_produto,
                         "preco_competidor": preco_competidor,
-                        "indice_preco_competidor": round(preco_final / preco_competidor, 4),
+                        "indice_preco_competidor": round(
+                            preco_final / preco_competidor, 4
+                        ),
                         "gasto_marketing": gasto_marketing,
                         "campanha_id": (
                             f"CAMP-{data.year}-{data.month:02d}" if promo else None
@@ -359,7 +600,9 @@ def main() -> None:
     print(f"Dataset gerado: {destino}")
     print(f"Linhas: {len(df):,} | Colunas: {df.shape[1]}")
     print(f"Periodo: {df['data'].min().date()} a {df['data'].max().date()}")
-    print(f"Receita total simulada: R$ {(df['preco_final'] * df['quantidade_vendida_dia']).sum():,.2f}")
+    print(
+        f"Receita total simulada: R$ {(df['preco_final'] * df['quantidade_vendida_dia']).sum():,.2f}"
+    )
 
 
 if __name__ == "__main__":
