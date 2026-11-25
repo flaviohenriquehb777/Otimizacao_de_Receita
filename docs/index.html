@@ -3,575 +3,316 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Maximização de Receita – Cafeterias</title>
+  <title>Otimização de Receita — Preço &amp; Desconto</title>
+  <meta name="description" content="Do problema de negócio à decisão: um modelo de demanda que prescreve o desconto que maximiza o lucro, por loja e produto, respeitando o piso de preço." />
   <link rel="icon" type="image/png" href="favicon_logo.png" />
   <style>
     :root {
-      --bg: #0f1115;
-      --panel: #151922;
-      --text: #e5e7eb;
+      --bg: #0e1117;
+      --panel: #171a21;
+      --panel-2: #0b0d12;
+      --border: #262b36;
+      --text: #e6e6e6;
       --muted: #9aa0a6;
-      --primary: #4f46e5;
-      --accent: #22d3ee;
-      --danger: #ef4444;
+      --primary: #e8a33d;
+      --primary-2: #f0b85a;
+      --ok: #34d399;
     }
-    html, body { height: 100%; }
     *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
     body {
       margin: 0; background: var(--bg); color: var(--text);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", Arial, sans-serif;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.55;
     }
-    .container { max-width: 960px; margin: 0 auto; padding: 24px; }
-    .card { background: var(--panel); border-radius: 12px; padding: 20px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); }
-    h1 { font-size: 1.6rem; margin: 0 0 12px; text-align: center; }
-    p { color: var(--muted); }
-    label { display:block; margin: 14px 0 6px; }
-    input[type="number"] { width: 100%; padding: 12px; background: #0b0d11; border: 1px solid #2a2f3a; border-radius: 8px; color: var(--text); }
-    .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; align-items: start; }
-    .row + .row { margin-top: 8px; }
+    .container { max-width: 980px; margin: 0 auto; padding: 32px 20px 56px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+      padding: 24px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+    }
+    .card + .card { margin-top: 18px; }
+    h1 { font-size: clamp(1.6rem, 3.4vw, 2.3rem); margin: 10px 0 8px; letter-spacing: -0.01em; }
+    h2 { font-size: 1.2rem; margin: 0 0 6px; }
+    p { margin: 0 0 10px; }
+    .lead { font-size: 1.05rem; color: var(--text); max-width: 62ch; }
+    .muted { color: var(--muted); font-size: 0.92rem; }
+    a { color: var(--primary); }
+    .pill {
+      display: inline-block; font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase;
+      color: var(--primary-2); background: rgba(232, 163, 61, 0.12);
+      border: 1px solid rgba(232, 163, 61, 0.35); border-radius: 999px; padding: 4px 12px; font-weight: 600;
+    }
+    .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 18px; }
     .btn {
-      margin-top: 16px; padding: 12px 16px; border-radius: 8px; border: none; cursor: pointer;
-      background: linear-gradient(135deg, var(--primary), var(--accent)); color: white; font-weight: 600;
+      display: inline-block; padding: 12px 18px; border-radius: 10px; border: 1px solid transparent;
+      background: linear-gradient(135deg, var(--primary), var(--primary-2)); color: #10131a;
+      font-weight: 700; text-decoration: none; cursor: pointer;
     }
-    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-    .result { margin-top: 20px; padding: 16px; background: #0b0d11; border: 1px solid #2a2f3a; border-radius: 8px; }
-    .muted { color: var(--muted); }
-    .footer { margin-top: 28px; font-size: 0.9rem; color: var(--muted); }
-    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background: #0b0d11; padding: 2px 6px; border-radius: 6px; }
-
-    @media (max-width: 768px) {
-      .container { padding: 16px; }
-      .card { padding: 16px; }
-      h1 { font-size: 1.4rem; }
-      .btn { width: 100%; }
+    .btn.ghost { background: transparent; color: var(--text); border-color: var(--border); }
+    .btn.ghost:hover { border-color: var(--primary); color: var(--primary-2); }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 12px; }
+    .metric { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+    .metric .label { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
+    .metric .value { font-size: 1.5rem; font-weight: 700; margin-top: 4px; }
+    .metric .value.best { color: var(--ok); }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.92rem; }
+    th, td { text-align: right; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    th:first-child, td:first-child { text-align: left; }
+    thead th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+    tr.best td { color: var(--ok); font-weight: 600; }
+    ol.fases { margin: 12px 0 0; padding-left: 0; list-style: none; counter-reset: fase; }
+    ol.fases li { position: relative; padding: 8px 0 8px 44px; border-bottom: 1px solid var(--border); }
+    ol.fases li:last-child { border-bottom: none; }
+    ol.fases li::before {
+      counter-increment: fase; content: counter(fase);
+      position: absolute; left: 0; top: 8px; width: 28px; height: 28px; border-radius: 8px;
+      display: grid; place-items: center; font-weight: 700; font-size: 0.85rem;
+      background: rgba(232, 163, 61, 0.14); color: var(--primary-2); border: 1px solid rgba(232, 163, 61, 0.3);
     }
+    ol.fases strong { color: var(--text); }
+    .vetadas { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; padding: 0; margin: 12px 0; }
+    .vetadas li {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem;
+      background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f4a3a3; border-radius: 8px; padding: 4px 10px;
+    }
+    .honest {
+      margin-top: 14px; padding: 12px 14px; border-radius: 10px; font-size: 0.88rem; color: var(--muted);
+      background: var(--panel-2); border-left: 3px solid var(--primary);
+    }
+    canvas { margin-top: 12px; max-height: 320px; }
+    footer { margin-top: 24px; color: var(--muted); font-size: 0.85rem; }
+    footer code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; }
+    @media (max-width: 640px) { .container { padding: 20px 14px 40px; } .card { padding: 18px; } }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="card">
-      <h1>Maximização de Receita – Rede de Cafeterias</h1>
-      <p>Use o modelo de regressão linear para estimar a melhor porcentagem de desconto (até 4%) que maximiza a receita mensal.</p>
-
-      <div class="row">
-        <div>
-          <label for="preco_original">Preço Original (R$)</label>
-          <input type="number" id="preco_original" step="0.01" min="0" placeholder="Ex.: 19.90" />
-        </div>
-        <div>
-          <label for="custo_producao">Custo de Produção (R$)</label>
-          <input type="number" id="custo_producao" step="0.01" min="0" placeholder="Ex.: 6.50" />
-        </div>
+    <!-- Hero -->
+    <header class="card">
+      <span class="pill">CRISP-DM · Machine Learning</span>
+      <h1>Otimização de Receita — Preço &amp; Desconto</h1>
+      <p class="lead">
+        Do problema de negócio à decisão: um modelo de demanda que <strong>prescreve o desconto que
+        maximiza o lucro</strong>, por loja e produto, respeitando o piso de preço.
+      </p>
+      <div class="cta">
+        <a id="ctaApp" class="btn" hidden>Abrir o app de decisão</a>
+        <a id="ctaRepo" class="btn ghost" href="https://github.com/flaviohenriquehb777/Otimizacao_de_Receita">Ver o repositório</a>
+        <span id="ctaNote" class="muted"></span>
       </div>
+      <p class="muted" id="status">Carregando artefatos do treino…</p>
+    </header>
 
-      <div class="row">
-        <div>
-          <label for="max_desconto">Desconto Máximo (%)</label>
-          <input type="number" id="max_desconto" step="0.1" min="0" max="4" value="4" />
-          <span class="muted">Padrão: 4%</span>
-        </div>
-        <div>
-          <label for="resolucao">Resolução de Busca (p.p.)</label>
-          <input type="number" id="resolucao" step="0.1" min="0.1" value="0.1" />
-          <span class="muted">Passo da varredura do desconto</span>
-        </div>
-      </div>
+    <!-- Resultados no teste -->
+    <section class="card">
+      <h2>Resultados no teste (Q4/2025)</h2>
+      <p class="muted">Recorte temporal intocado na seleção — o teste é sempre o futuro.</p>
+      <div class="metrics" id="metrics"></div>
+      <p class="honest" id="honestidade" hidden></p>
+    </section>
 
-      <div class="row">
-        <div>
-          <label for="objetivo">Objetivo de Otimização</label>
-          <select id="objetivo">
-            <option value="receita" selected>Maximizar Receita</option>
-            <option value="lucro">Maximizar Lucro (com restrição de custo)</option>
-          </select>
-        </div>
-        <div>
-          <label for="mostrar_dataset">Curva de Referência</label>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <input type="checkbox" id="mostrar_dataset" />
-            <span class="muted">Exibir gráfico.</span>
-          </div>
-          <span class="muted" id="statusDataset"></span>
-        </div>
-        <div>
-          <label for="visualizacao">Visualização</label>
-          <select id="visualizacao">
-            <option value="previsao" selected>Gráfico de previsão linear</option>
-            <option value="best">Previsão BEST (ONNX)</option>
-            <option value="curva">Curva de referência</option>
-          </select>
-        </div>
-      </div>
+    <!-- Curva de negócio -->
+    <section class="card" id="cardCurva">
+      <h2>Curva de negócio</h2>
+      <p class="muted">
+        Lucro e demanda médios previstos por desconto. O ótimo fica na ponta barata: o desconto
+        compra volume sem destruir margem.
+      </p>
+      <canvas id="chartCurva" height="120"></canvas>
+      <p class="muted" id="curvaFonte"></p>
+    </section>
 
-      <button class="btn" id="btnCalc" disabled>Calcular melhor desconto</button>
+    <!-- Método -->
+    <section class="card">
+      <h2>Método — CRISP-DM</h2>
+      <p class="muted">Cada fase materializada em código testável e espelhada nos notebooks.</p>
+      <ol class="fases">
+        <li><strong>Business Understanding</strong> — objetivo, KPIs e critérios de sucesso.</li>
+        <li><strong>Data Understanding</strong> — esquema, regras de negócio e distribuições.</li>
+        <li><strong>Data Preparation</strong> — validação fail-closed, features sem vazamento e split temporal estrito.</li>
+        <li><strong>Modeling</strong> — treino e seleção do melhor modelo por lucro esperado na validação.</li>
+        <li><strong>Evaluation</strong> — métricas no recorte futuro (Q4) e curva de negócio.</li>
+        <li><strong>Deployment</strong> — o app e este showcase leem o <em>modelo real</em> e a <em>lógica de negócio real</em>.</li>
+      </ol>
+    </section>
 
-      <div class="result" id="output" hidden>
-        <div id="resumo"></div>
-        <div class="muted" id="detalhe"></div>
-        <div class="muted" id="elasticidade"></div>
-        <div class="muted" id="viabilityMsg"></div>
-        <canvas id="chart" style="margin-top:12px; max-height: 340px;"></canvas>
-        <div class="muted" id="constraintMsg" style="margin-top:8px;"></div>
-      </div>
-      <p class="muted" id="status">Carregando modelo…</p>
-    </div>
+    <!-- Guardrails -->
+    <section class="card">
+      <h2>Guardrails anti-vazamento</h2>
+      <p class="muted">
+        Colunas vetadas por vazamento: agregados do próprio dia-alvo e desfechos derivados da demanda.
+      </p>
+      <ul class="vetadas" id="vetadas"></ul>
+      <p class="muted" id="featuresInfo"></p>
+    </section>
 
-    <div class="card" id="cardDiag" style="margin-top:16px;">
-      <h2 style="margin-top:0;">Diagnósticos do Modelo</h2>
-      <p class="muted">Gráficos gerados pelo Notebook 04 para validação: curva de negócio e análises de holdout.</p>
-      <style>
-        /* Layout específico para diagnóstico: 1 coluna, 3 linhas */
-        #diagImages { display: grid; grid-template-columns: 1fr; gap: 16px; }
-        #diagImages .diag-block { background: #0b0d11; border: 1px solid #2a2f3a; border-radius: 8px; padding: 12px; }
-        #diagImages label { display:block; margin-bottom: 8px; }
-        /* Padrão para imagens de diagnóstico */
-        #imgCurve, #imgResiduos { width: 100%; border-radius: 8px; border: 1px solid #2a2f3a; }
-        /* Específico: Holdout reduzido a 50% e centralizado, com limite de largura */
-        #imgHoldout { width: 50% !important; max-width: 600px; border-radius: 8px; border: 1px solid #2a2f3a; display: block; margin: 0 auto; }
-      </style>
-      <div id="diagImages">
-        <div class="diag-block">
-          <label>Curva de negócio (receita/lucro vs desconto)</label>
-          <img id="imgCurve" alt="Curva de negócio" />
-          <div class="muted" style="margin-top:6px;">
-            Fonte: <span class="code">docs/curve_business_metric.csv</span>
-          </div>
-        </div>
-        <div class="diag-block">
-          <label>Holdout: Real vs Predito</label>
-          <img id="imgHoldout" alt="Diagnóstico holdout" />
-        </div>
-        <div class="diag-block">
-          <label>Resíduos (holdout)</label>
-          <img id="imgResiduos" alt="Resíduos" />
-        </div>
-      </div>
-      <div style="display:flex; align-items:center; gap:12px; margin-top:8px;">
-        <p class="muted" id="diagStatus" style="margin:0;">&nbsp;</p>
-        <button class="btn" id="btnReloadDiag" style="margin:0; padding:8px 12px;">Recarregar diagnósticos</button>
-      </div>
-    </div>
+    <!-- Candidatos -->
+    <section class="card">
+      <h2>Candidatos avaliados</h2>
+      <p class="muted">Seleção pelo lucro esperado na validação (jul–set/2025); o teste nunca entra na escolha.</p>
+      <table>
+        <thead>
+          <tr><th>Modelo</th><th>Lucro (val.)</th><th>Uplift (val.)</th><th>RMSE (val.)</th><th>R² (val.)</th></tr>
+        </thead>
+        <tbody id="candidatos"></tbody>
+      </table>
+    </section>
 
-    <div class="card" id="cardPolicy" style="margin-top:16px;">
-      <h2 style="margin-top:0;">Política Ótima (amostra)</h2>
-      <p class="muted">Resumo por observação com desconto ótimo e métricas previstas.</p>
-      <div style="overflow:auto;">
-        <table id="policyTable" style="width:100%; border-collapse:collapse;">
-          <thead>
-            <tr id="policyHeader"></tr>
-          </thead>
-          <tbody id="policyBody"></tbody>
-        </table>
-      </div>
-      <p class="muted" id="policyStatus"></p>
-    </div>
-
-    <div class="footer">
-      <p>Modelo carregado de <span class="code">docs/model_linear.json</span>. Após treinar, substitua por coeficientes reais gerados pelo script de treino.</p>
-    </div>
+    <footer>
+      <p id="proveniencia"></p>
+      <p>
+        Licença <a href="https://github.com/flaviohenriquehb777/Otimizacao_de_Receita/blob/main/LICENSE.md">MIT</a> ·
+        <a href="https://github.com/flaviohenriquehb777/Otimizacao_de_Receita">Repositório</a>
+      </p>
+    </footer>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
   <script>
-    const state = { model: null, datasetCurve: null, onnx: null };
+    // Ponto único de configuração: URL do app publicado (Streamlit Cloud).
+    // Preenchido na Fase 5 (deploy). Enquanto vazio, o CTA do app fica oculto.
+    const APP_URL = "";
 
-    // Resolve caminho de assets funcionando em vários ambientes:
-    // - servidor local (docs/ como raiz)
-    // - GitHub Pages (/<repo>/)
-    // - htmlpreview/github raw (preview via README)
-    async function resolveAssetPath(filename) {
-      const origin = window.location.origin;
-      const pathname = window.location.pathname;
-      const baseDir = pathname.replace(/index\.html(?:\?.*)?$/, '');
-      const candidates = [
-        filename,
-        baseDir + filename,
-        origin + baseDir + filename,
-        '/docs/' + filename,
-        origin + '/docs/' + filename,
+    const $ = (id) => document.getElementById(id);
+    const pct = (v) => `${(v * 100).toFixed(1)}%`;
+    const brl = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+    async function buscar(nome, tipo) {
+      const base = window.location.pathname.replace(/index\.html$/, "");
+      const url = base + nome;
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`${nome}: HTTP ${res.status}`);
+      return tipo === "text" ? res.text() : res.json();
+    }
+
+    function renderResultados(snap) {
+      const t = snap.teste;
+      const cards = [
+        { label: "Campeão", value: snap.modelo },
+        { label: "R² (teste)", value: t.r2.toFixed(3), best: true },
+        { label: "RMSE (teste)", value: t.rmse.toFixed(3) },
+        { label: "MAE (teste)", value: t.mae.toFixed(3) },
+        { label: "Uplift de lucro", value: `+${t.uplift_pct.toFixed(2)}%`, best: true },
+        { label: "Desconto médio", value: pct(t.desconto_medio) },
       ];
-
-      // Caso htmlpreview.github.io (link no README): converter query ?https://github.com/.../blob/.../docs/index.html
-      const qs = (window.location.search || '').replace(/^\?/, '');
-      if (qs.startsWith('https://github.com/')) {
-        try {
-          const raw = qs
-            .replace('https://github.com/', 'https://raw.githubusercontent.com/')
-            .replace('/blob/', '/');
-          const rawBase = raw.replace(/index\.html(?:\?.*)?$/, '');
-          candidates.push(rawBase + filename);
-        } catch (_) { /* noop */ }
-      }
-
-      // Caso já esteja em raw.githubusercontent.com
-      if (origin.includes('raw.githubusercontent.com')) {
-        candidates.push(baseDir + filename);
-      }
-
-      for (const p of candidates) {
-        try {
-          const url = p.startsWith('http') ? p : (p.startsWith('/') ? origin + p : p);
-          const res = await fetch(url, { method: 'GET', cache: 'no-store' });
-          if (res.ok) return url + (url.includes('?') ? '&' : '?') + '_ts=' + Date.now();
-        } catch (_) { /* tenta próximo */ }
-      }
-      return null;
-    }
-
-    async function loadModel() {
-      try {
-        const url = await resolveAssetPath('model_linear.json');
-        if (!url) throw new Error('model_linear.json não encontrado');
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('Falha ao buscar model_linear.json');
-        const model = await res.json();
-        if (!model || typeof model !== 'object') throw new Error('JSON do modelo inválido');
-        if (!model.coefficients || typeof model.intercept !== 'number') throw new Error('JSON do modelo inválido');
-        state.model = model;
-        document.getElementById('status').textContent = 'Modelo carregado.';
-        document.getElementById('btnCalc').disabled = false;
-      } catch (err) {
-        document.getElementById('status').textContent = 'Modelo não encontrado em docs/model_linear.json. Treine e exporte primeiro.';
-        console.error(err);
+      $("metrics").innerHTML = cards
+        .map((c) => `<div class="metric"><div class="label">${c.label}</div>
+          <div class="value ${c.best ? "best" : ""}">${c.value}</div></div>`)
+        .join("");
+      if (snap.honestidade) {
+        $("honestidade").textContent = snap.honestidade;
+        $("honestidade").hidden = false;
       }
     }
 
-    async function loadDatasetCurve() {
-      try {
-        const url = await resolveAssetPath('curve_business_metric.csv');
-        if (!url) throw new Error('CSV não encontrado');
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('CSV não encontrado');
-        const text = await res.text();
-        const lines = text.trim().split(/\r?\n/);
-        const header = lines.shift().split(',');
-        const idxD = header.indexOf('desconto_pct');
-        const idxRev = header.indexOf('mean_revenue');
-        const idxProf = header.indexOf('mean_profit');
-        const xs = [], rev = [], prof = [];
-        for (const line of lines) {
-          const cols = line.split(',');
-          const d = parseFloat(cols[idxD] || '0');
-          const r = parseFloat(cols[idxRev] || '0');
-          const p = parseFloat(cols[idxProf] || '0');
-          xs.push((d * 100).toFixed(2));
-          rev.push(r);
-          prof.push(p);
-        }
-        state.datasetCurve = { xs, rev, prof };
-        document.getElementById('statusDataset').textContent = '';
-      } catch (e) {
-        document.getElementById('statusDataset').textContent = 'Curva média não disponível.';
-        console.warn(e);
-      }
+    function renderCandidatos(snap) {
+      const linhas = snap.candidatos
+        .slice()
+        .sort((a, b) => b.validacao.lucro_politica - a.validacao.lucro_politica)
+        .map((c) => {
+          const v = c.validacao;
+          const best = c.modelo === snap.modelo ? " class=\"best\"" : "";
+          return `<tr${best}><td>${c.modelo}</td><td>${brl(v.lucro_politica)}</td>
+            <td>+${v.uplift_pct.toFixed(2)}%</td><td>${v.rmse.toFixed(3)}</td><td>${v.r2.toFixed(3)}</td></tr>`;
+        })
+        .join("");
+      $("candidatos").innerHTML = linhas;
     }
 
-    async function initOnnx() {
-      const s = document.getElementById('status');
-      try {
-        // Tenta carregar sessão ONNX e metadados
-        const onnxUrl = await resolveAssetPath('model_best.onnx');
-        const metaUrl = await resolveAssetPath('model_best_meta.json');
-        if (!onnxUrl || !metaUrl) throw new Error('Assets ONNX não encontrados');
-        const session = await ort.InferenceSession.create(onnxUrl);
-        const resMeta = await fetch(metaUrl);
-        if (!resMeta.ok) throw new Error('Metadados ONNX não encontrados');
-        const meta = await resMeta.json();
-        if (!meta || !Array.isArray(meta.features)) throw new Error('Metadados inválidos');
-        state.onnx = { session, features: meta.features, name: meta.model_name };
-        s.textContent = `BEST (ONNX) carregado: ${meta.model_name}`;
-        s.style.color = '#0a7d1e';
-      } catch (e) {
-        console.warn('ONNX indisponível:', e);
-        // Mantém status neutro; cálculo usará fallback linear silenciosamente
-      }
+    function renderCartao(cartao) {
+      $("vetadas").innerHTML = cartao.colunas_vetadas_por_vazamento
+        .map((c) => `<li>${c}</li>`)
+        .join("");
+      const n = cartao.features_numericas.length + cartao.features_categoricas.length;
+      const grade = cartao.grade_desconto;
+      $("featuresInfo").textContent =
+        `${n} features leakage-safe (${cartao.features_numericas.length} numéricas + ` +
+        `${cartao.features_categoricas.length} categóricas) · grade de desconto ` +
+        `${pct(grade[0])}–${pct(grade[grade.length - 1])}`;
     }
 
-    async function predictQuantityOnnx(precoOriginal, custoProducao, descontoPct) {
-      if (!state.onnx || !state.onnx.session) throw new Error('Sessão ONNX indisponível');
-      const precoFinal = precoOriginal * (1 - descontoPct);
-      const featMap = {
-        custo_producao: custoProducao,
-        preco_original: precoOriginal,
-        desconto_pct: descontoPct,
-        preco_final: precoFinal,
-      };
-      const feats = state.onnx.features.map(k => Number(featMap[k] ?? 0));
-      const inputName = state.onnx.session.inputNames ? state.onnx.session.inputNames[0] : 'float_input';
-      const tensor = new ort.Tensor('float32', Float32Array.from(feats), [1, feats.length]);
-      const feeds = {}; feeds[inputName] = tensor;
-      const results = await state.onnx.session.run(feeds);
-      const outputName = state.onnx.session.outputNames ? state.onnx.session.outputNames[0] : Object.keys(results)[0];
-      const y = Array.isArray(results[outputName].data) ? results[outputName].data[0] : results[outputName].data[0];
-      return Math.max(0, Number(y));
+    function renderProveniencia(snap) {
+      const p = snap.proveniencia || {};
+      $("proveniencia").textContent =
+        `Treino determinístico (SEED ${p.seed}) · commit ${p.commit} · hash dos dados ${p.hash_dados}` +
+        (p.gerado_em ? ` · gerado em ${p.gerado_em}` : "");
     }
 
-    function predictQuantity(precoOriginal, custoProducao, descontoPct) {
-      const m = state.model;
-      const precoFinal = precoOriginal * (1 - descontoPct);
-      const feats = {
-        custo_producao: custoProducao,
-        preco_original: precoOriginal,
-        desconto_pct: descontoPct,
-        preco_final: precoFinal,
-      };
-      let y = m.intercept;
-      for (const [k, v] of Object.entries(m.coefficients)) {
-        y += (v || 0) * (feats[k] ?? 0);
-      }
-      return Math.max(0, y);
+    function parseCsv(texto) {
+      const linhas = texto.trim().split(/\r?\n/);
+      const header = linhas.shift().split(",");
+      return linhas.map((linha) => {
+        const cols = linha.split(",");
+        const obj = {};
+        header.forEach((h, i) => { obj[h] = parseFloat(cols[i]); });
+        return obj;
+      });
     }
 
-    function formatBRL(v) {
-      return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-    }
+    function renderCurva(csvTexto) {
+      const dados = parseCsv(csvTexto);
+      const labels = dados.map((d) => pct(d.desconto_pct));
+      const lucro = dados.map((d) => d.lucro_medio_previsto);
+      const qtd = dados.map((d) => d.qtd_media_prevista);
 
-    let chart;
-
-    async function onCalc() {
-      const precoOriginal = parseFloat(document.getElementById('preco_original').value);
-      const custoProducao = parseFloat(document.getElementById('custo_producao').value);
-      const maxDescontoPct = Math.min(4, Math.max(0, parseFloat(document.getElementById('max_desconto').value))) / 100.0;
-      const stepPct = Math.max(0.001, parseFloat(document.getElementById('resolucao').value) / 100.0);
-
-      if (!state.model) return;
-      if (!isFinite(precoOriginal) || !isFinite(custoProducao) || precoOriginal <= 0) {
-        alert('Preencha os valores corretamente.');
-        return;
-      }
-
-      const objetivo = document.getElementById('objetivo').value; // 'receita' | 'lucro'
-      const visualizacao = document.getElementById('visualizacao').value; // 'previsao' | 'curva' | 'best'
-      let best = { desconto: 0, receita: -Infinity, lucro: -Infinity, qtd: 0, precoFinal: 0 };
-      const xs = [];
-      const receitaArr = [];
-      const lucroArr = [];
-      const invalidoArr = [];
-      let constraintHit = false;
-      for (let d = 0; d <= maxDescontoPct + 1e-12; d += stepPct) {
-        let qtd;
-        if (visualizacao === 'best') {
-          if (!state.onnx) {
-            // ONNX não carregado: usa previsão linear silenciosamente
-            qtd = predictQuantity(precoOriginal, custoProducao, d);
-          } else {
-            try { qtd = await predictQuantityOnnx(precoOriginal, custoProducao, d); }
-            catch (e) { console.warn(e); qtd = predictQuantity(precoOriginal, custoProducao, d); }
-          }
-        } else {
-          qtd = predictQuantity(precoOriginal, custoProducao, d);
-        }
-        const precoFinal = precoOriginal * (1 - d);
-        const receita = precoFinal * qtd;
-        const lucro = (precoFinal - custoProducao) * qtd;
-        const invalido = precoFinal < custoProducao;
-        if (invalido) constraintHit = true;
-        xs.push((d * 100).toFixed(2));
-        receitaArr.push(receita);
-        lucroArr.push(invalido ? null : lucro);
-        invalidoArr.push(invalido);
-        const cand = { desconto: d, receita, lucro, qtd, precoFinal };
-        if (objetivo === 'receita') {
-          if (receita > best.receita) best = cand;
-        } else {
-          if (!invalido && lucro > best.lucro) best = cand;
-        }
-      }
-
-      // índice do ponto ótimo
-      const bestLabel = (best.desconto * 100).toFixed(2);
-      const bestIndex = xs.indexOf(bestLabel);
-
-      const pct = (best.desconto * 100).toFixed(2);
-      const resumo = `Desconto ideal estimado: ${pct}% | ${objetivo === 'receita' ? 'Receita' : 'Lucro'}: ${formatBRL(objetivo === 'receita' ? best.receita : best.lucro)} | Qtd prevista: ${best.qtd.toFixed(0)} | Preço final: ${formatBRL(best.precoFinal)}`;
-      document.getElementById('resumo').textContent = resumo;
-      document.getElementById('detalhe').textContent = 'Nota: Resultado depende dos coeficientes do modelo treinado (sem normalização).';
-      document.getElementById('output').hidden = false;
-
-      // Elasticidade aproximada (diferença finita)
-      let elastMsg = '';
-      if (bestIndex >= 0) {
-        const delta = Math.max(stepPct / 2, 0.005);
-        const d1 = Math.max(0, best.desconto - delta);
-        const d2 = Math.min(maxDescontoPct, best.desconto + delta);
-        const q1 = predictQuantity(precoOriginal, custoProducao, d1);
-        const q2 = predictQuantity(precoOriginal, custoProducao, d2);
-        const p1 = precoOriginal * (1 - d1);
-        const p2 = precoOriginal * (1 - d2);
-        const qmid = (q1 + q2) / 2;
-        const pmid = (p1 + p2) / 2;
-        if (qmid > 0 && pmid > 0 && Math.abs(p2 - p1) > 1e-9) {
-          const dQ_over_Q = (q2 - q1) / qmid;
-          const dP_over_P = (p2 - p1) / pmid;
-          const elasticity = dQ_over_Q / dP_over_P; // esperado negativo
-          elastMsg = `Elasticidade preço-da-demanda (aprox.): ${elasticity.toFixed(2)}`;
-        }
-      }
-      document.getElementById('elasticidade').textContent = elastMsg;
-
-      // Viabilidade
-      let viability = '';
-      const anyLucro = lucroArr.some(v => v !== null);
-      if (objetivo === 'lucro') {
-        if (!anyLucro) {
-          viability = 'Viabilidade: lucro inviável para qualquer desconto > 0 com custo informado.';
-        } else if (best.desconto === 0) {
-          viability = 'Viabilidade: melhor lucro em 0% de desconto; pontos acima do custo são limitados.';
-        } else {
-          viability = 'Viabilidade: desconto em lucro viável dentro da restrição de custo.';
-        }
-      } else {
-        viability = 'Viabilidade: receita otimizada independentemente da restrição de custo.';
-      }
-      document.getElementById('viabilityMsg').textContent = viability;
-
-      // Atualiza/Cria gráfico
-      const ctx = document.getElementById('chart');
-      const datasets = [];
-      if (visualizacao === 'previsao' || visualizacao === 'best') {
-        datasets.push({
-          label: visualizacao === 'best' ? 'Receita (BEST ONNX)' : 'Receita (R$)',
-          data: receitaArr,
-          borderColor: '#22d3ee',
-          backgroundColor: 'rgba(34, 211, 238, 0.2)',
-          tension: 0.25,
-          borderWidth: 2,
-        });
-        datasets.push({
-          label: visualizacao === 'best' ? 'Lucro (BEST ONNX) – restringido' : 'Lucro (R$) – restringido',
-          data: lucroArr,
-          borderColor: '#4f46e5',
-          backgroundColor: 'rgba(79, 70, 229, 0.2)',
-          tension: 0.25,
-          borderWidth: 2,
-        });
-      }
-
-      // marcador do ponto ótimo
-      if (visualizacao === 'previsao' || visualizacao === 'best') {
-        const markerData = xs.map((_, i) => (i === bestIndex ? (objetivo === 'receita' ? receitaArr[i] : lucroArr[i]) : null));
-        datasets.push({
-          label: objetivo === 'receita' ? 'Ótimo (receita)' : 'Ótimo (lucro)',
-          data: markerData,
-          borderColor: objetivo === 'receita' ? '#22d3ee' : '#4f46e5',
-          backgroundColor: 'rgba(255,255,255,0.85)',
-          pointRadius: 6,
-          pointHoverRadius: 7,
-          showLine: false,
-        });
-      }
-      const showDataset = document.getElementById('mostrar_dataset').checked && state.datasetCurve && visualizacao === 'curva';
-      if (showDataset) {
-        datasets.push({
-          label: 'Receita média (dataset)',
-          data: state.datasetCurve.rev,
-          borderColor: '#10b981',
-          backgroundColor: 'rgba(16, 185, 129, 0.15)',
-          tension: 0.25,
-          borderWidth: 2,
-          borderDash: [6, 3],
-        });
-        datasets.push({
-          label: 'Lucro médio (dataset)',
-          data: state.datasetCurve.prof,
-          borderColor: '#f59e0b',
-          backgroundColor: 'rgba(245, 158, 11, 0.15)',
-          tension: 0.25,
-          borderWidth: 2,
-          borderDash: [6, 3],
-        });
-      }
-
-      const data = {
-        labels: xs,
-        datasets
-      };
-      const options = {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          x: { title: { display: true, text: 'Desconto (%)', color: '#e5e7eb' }, ticks: { color: '#9aa0a6' }, grid: { color: '#242938' } },
-          y: { title: { display: true, text: 'Valor (R$)', color: '#e5e7eb' }, ticks: { color: '#9aa0a6' }, grid: { color: '#242938' } },
+      new Chart($("chartCurva"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            { label: "Lucro médio (R$)", data: lucro, borderColor: "#e8a33d",
+              backgroundColor: "rgba(232,163,61,0.15)", fill: true, tension: 0.3, yAxisID: "y" },
+            { label: "Demanda média (un.)", data: qtd, borderColor: "#22d3ee",
+              backgroundColor: "rgba(34,211,238,0.08)", fill: false, tension: 0.3, yAxisID: "y1" },
+          ],
         },
-        plugins: {
-          legend: { labels: { color: '#e5e7eb' } },
-          tooltip: { mode: 'index', intersect: false }
-        }
-      };
-      if (chart) { chart.data = data; chart.options = options; chart.update(); }
-      else { chart = new Chart(ctx, { type: 'line', data, options }); }
-
-      document.getElementById('constraintMsg').textContent = (objetivo === 'lucro' && constraintHit) ? 'Observação: pontos de lucro foram omitidos quando o preço final fica abaixo do custo.' : '';
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: { legend: { labels: { color: "#e6e6e6" } } },
+          scales: {
+            x: { title: { display: true, text: "Desconto", color: "#9aa0a6" },
+                 ticks: { color: "#9aa0a6" }, grid: { color: "rgba(255,255,255,0.06)" } },
+            y: { position: "left", title: { display: true, text: "Lucro médio (R$)", color: "#e8a33d" },
+                 ticks: { color: "#9aa0a6" }, grid: { color: "rgba(255,255,255,0.06)" } },
+            y1: { position: "right", title: { display: true, text: "Demanda média (un.)", color: "#22d3ee" },
+                  ticks: { color: "#9aa0a6" }, grid: { drawOnChartArea: false } },
+          },
+        },
+      });
+      $("curvaFonte").textContent = "Fonte: business_curve.csv (média prevista no teste pelo campeão).";
     }
 
-    document.getElementById('btnCalc').addEventListener('click', onCalc);
-    loadModel();
-    loadDatasetCurve();
-    initOnnx();
-    document.getElementById('mostrar_dataset').addEventListener('change', () => { if (!document.getElementById('output').hidden) onCalc(); });
-    document.getElementById('visualizacao').addEventListener('change', () => { if (!document.getElementById('output').hidden) onCalc(); });
-    document.getElementById('objetivo').addEventListener('change', () => { if (!document.getElementById('output').hidden) onCalc(); });
-  </script>
-  <script>
-    function initDiagnostics() {
-      const status = document.getElementById('diagStatus');
-      let ok = 0, total = 3;
-      const imgCurve = document.getElementById('imgCurve');
-      const imgHoldout = document.getElementById('imgHoldout');
-      const imgRes = document.getElementById('imgResiduos');
-      function mark(img) { img.style.display = 'block'; ok++; status.textContent = ok === total ? 'Diagnósticos carregados.' : ''; }
-      function hide(img) { img.style.display = 'none'; status.textContent = 'Alguns diagnósticos não estão disponíveis.'; }
-
-      async function loadImage(img, filename) {
-        const path = await resolveAssetPath(filename);
-        if (path) {
-          img.onload = () => mark(img);
-          img.onerror = () => hide(img);
-          img.src = path;
-        } else {
-          hide(img);
-        }
+    async function iniciar() {
+      if (APP_URL) {
+        $("ctaApp").href = APP_URL;
+        $("ctaApp").hidden = false;
+      } else {
+        $("ctaNote").textContent = "App publicado em breve (Streamlit Cloud).";
       }
-
-      // Carrega imagens com fallback de caminho
-      loadImage(imgCurve, 'curve_business_metric.png');
-      loadImage(imgHoldout, 'diag_holdout_scatter.png');
-      loadImage(imgRes, 'diag_residuos.png');
-    }
-
-    async function loadPolicyCsv() {
-      const status = document.getElementById('policyStatus');
-      const head = document.getElementById('policyHeader');
-      const body = document.getElementById('policyBody');
       try {
-        const url = await resolveAssetPath('policy_otima_resumo.csv');
-        if (!url) throw new Error('CSV não encontrado');
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('CSV não encontrado');
-        const text = await res.text();
-        const lines = text.trim().split(/\r?\n/);
-        const header = lines.shift().split(',');
-        // Monta cabeçalho
-        head.innerHTML = header.map(h => `<th style=\"text-align:left; border-bottom:1px solid #2a2f3a; padding:6px; color:#e5e7eb;\">${h}</th>`).join('');
-        // Primeiras 20 linhas
-        const maxRows = Math.min(20, lines.length);
-        let rowsHtml = '';
-        for (let i = 0; i < maxRows; i++) {
-          const cols = lines[i].split(',');
-          rowsHtml += '<tr>' + cols.map(c => `<td style=\"padding:6px; border-bottom:1px solid #22273a; color:#cbd5e1;\">${c}</td>`).join('') + '</tr>';
-        }
-        body.innerHTML = rowsHtml;
-        status.textContent = `Exibindo ${maxRows} de ${lines.length} linhas. Arquivo completo disponível em docs/policy_otima_resumo.csv.`;
-      } catch (e) {
-        status.textContent = 'Resumo de política não disponível.';
-        console.warn(e);
+        const [snap, cartao, csv] = await Promise.all([
+          buscar("metrics_snapshot.json", "json"),
+          buscar("model_card.json", "json"),
+          buscar("business_curve.csv", "text"),
+        ]);
+        renderResultados(snap);
+        renderCandidatos(snap);
+        renderCartao(cartao);
+        renderProveniencia(snap);
+        if (window.Chart) renderCurva(csv); else $("cardCurva").hidden = true;
+        $("status").textContent =
+          "Artefatos carregados diretamente do treino — nenhum valor fixo nesta página.";
+      } catch (erro) {
+        console.error(erro);
+        $("status").textContent =
+          "Artefatos indisponíveis. Rode 'python -m src.modeling.train_pipeline' para publicá-los.";
+        $("cardCurva").hidden = true;
       }
     }
-    // Inicializa diagnósticos e tabela após definir as funções
-    initDiagnostics();
-    loadPolicyCsv();
-    document.getElementById('btnReloadDiag').addEventListener('click', () => { initDiagnostics(); loadPolicyCsv(); });
+
+    iniciar();
   </script>
 </body>
 </html>

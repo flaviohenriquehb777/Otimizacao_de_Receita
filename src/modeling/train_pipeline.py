@@ -60,7 +60,12 @@ from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_err
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from src.config.paths import APP_ARTIFACTS_DIR, DADOS_CAFETERIAS_PREPARADO, MODELS_DIR
+from src.config.paths import (
+    APP_ARTIFACTS_DIR,
+    DADOS_CAFETERIAS_PREPARADO,
+    DOCS_DIR,
+    MODELS_DIR,
+)
 from src.data.preparar_dataset import colunas_com_vazamento
 
 try:  # XGBoost é opcional para não travar ambientes mínimos.
@@ -836,7 +841,7 @@ def _nota_honestidade() -> str:
     )
 
 
-# --- 7) Bundle de serving do app (CRISP-DM — Deployment) ----------------------
+# --- 8) Bundle de serving do app (CRISP-DM — Deployment) ----------------------
 
 # Artefatos pequenos, versionados no Git, que o app (Streamlit Cloud) consome
 # sem DVC nem a base crua. O `test_predictions.parquet` fica de fora: é
@@ -892,6 +897,26 @@ def publicar_bundle_app(df: pd.DataFrame) -> Path:
     for nome in BUNDLE_APP:
         (APP_ARTIFACTS_DIR / nome).write_bytes((MODELS_DIR / nome).read_bytes())
     return APP_ARTIFACTS_DIR
+
+
+# --- 9) Publicação do site (GitHub Pages) -------------------------------------
+
+# Subconjunto **público** do bundle consumido pelo site estático em `docs/`.
+# Sem o `.pkl`: a página é um showcase de leitura (sem inferência no navegador —
+# a interatividade fica a cargo do app Streamlit, fonte única da lógica).
+BUNDLE_DOCS: tuple[str, ...] = (
+    "metrics_snapshot.json",
+    "model_card.json",
+    "business_curve.csv",
+)
+
+
+def publicar_site_docs() -> Path:
+    """Copia os artefatos públicos do treino para `docs/` (showcase do Pages)."""
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    for nome in BUNDLE_DOCS:
+        (DOCS_DIR / nome).write_bytes((MODELS_DIR / nome).read_bytes())
+    return DOCS_DIR
 
 
 def main() -> None:
@@ -954,7 +979,10 @@ def main() -> None:
     # (6) Bundle de serving do app: catálogo + cópias pequenas versionadas no Git.
     destino_app = publicar_bundle_app(df)
 
-    # (7) Tracking: um run por candidato no MLflow/DagsHub, campeão = model_best.
+    # (7) Site estático (GitHub Pages): artefatos públicos do showcase em docs/.
+    destino_site = publicar_site_docs()
+
+    # (8) Tracking: um run por candidato no MLflow/DagsHub, campeão = model_best.
     registrar_experimentos(
         resultado,
         [
@@ -973,7 +1001,8 @@ def main() -> None:
         f"Teste (negócio): uplift={resultado['teste']['uplift_pct']:.2f}% "
         f"desconto médio={resultado['teste']['desconto_medio']:.3f}\n"
         f"Artefatos em: {MODELS_DIR}\n"
-        f"Bundle do app em: {destino_app}"
+        f"Bundle do app em: {destino_app}\n"
+        f"Showcase em: {destino_site}"
     )
 
 
