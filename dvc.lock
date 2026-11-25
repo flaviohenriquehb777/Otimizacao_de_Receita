@@ -5,12 +5,12 @@ stages:
     deps:
     - path: src/config/paths.py
       hash: md5
-      md5: 95c523a1bab4fe449e2a49dd5d921ebc
-      size: 2033
+      md5: 3fe994a2729021fec3a7008eaf8020f0
+      size: 1794
     - path: src/data/gerar_dataset.py
       hash: md5
-      md5: fd6d575eb4a8af85c31a859c8c907963
-      size: 16578
+      md5: 2201aa2e6acf0d4eb6758d8dc2b631bf
+      size: 19123
     outs:
     - path: dados/dataset_cafeterias_rj.parquet
       hash: md5
@@ -19,43 +19,43 @@ stages:
   train:
     cmd: python -m src.modeling.train_pipeline
     deps:
-    - path: dados/dataset_cafeterias_rj.parquet
+    - path: dados/dataset_cafeterias_rj_preparado.parquet
       hash: md5
-      md5: 8729e903fffff331767602d42a497903
-      size: 1196962
+      md5: ec43806dde82e054473490b5d520215b
+      size: 1453958
     - path: src/config/paths.py
       hash: md5
-      md5: 95c523a1bab4fe449e2a49dd5d921ebc
-      size: 2033
+      md5: 3fe994a2729021fec3a7008eaf8020f0
+      size: 1794
+    - path: src/data/preparar_dataset.py
+      hash: md5
+      md5: 552e2f4332aef7ff27a3a7299c19234b
+      size: 13983
     - path: src/modeling/train_pipeline.py
       hash: md5
-      md5: 7f29c034956853a129d27aeb9df0cf3b
-      size: 28851
+      md5: 6538155d8f1f6959a64b35453c0ee646
+      size: 39588
     outs:
-    - path: models/best_model_max_receita.pkl
+    - path: models/best_model.pkl
       hash: md5
-      md5: 8990cd7af72798f34f9ec015afbb2611
-      size: 920
-    - path: models/curve_business_metric.csv
+      md5: 15f9130623d3d66f0d0dd6cc681b4dab
+      size: 7658
+    - path: models/business_curve.csv
       hash: md5
-      md5: d381345bafc6181539ace404d9462bb1
-      size: 2650
+      md5: 087a805d3c9055e9e70166cace0a2873
+      size: 877
     - path: models/metrics_snapshot.json
       hash: md5
-      md5: 345cab0c76dc677b965168a8ccc38082
-      size: 857
-    - path: models/model_best.onnx
+      md5: 1ebdd5bf74e01f6bffab8cd55e45282c
+      size: 4130
+    - path: models/model_card.json
       hash: md5
-      md5: 7b3d64808968823f6af55d09cb9be1b3
-      size: 286
-    - path: models/model_best_meta.json
+      md5: e9d380aeb6fa4c3d6a6786395b993c0c
+      size: 3339
+    - path: models/test_predictions.parquet
       hash: md5
-      md5: d737cd259e08fa8f1cf1bcd7858bc386
-      size: 177
-    - path: models/model_linear.json
-      hash: md5
-      md5: c506255c34fb1ec2f62354c75576ddb3
-      size: 625
+      md5: f8b5edceeacdfd382af66141d993650f
+      size: 191614
   preparar_dados:
     cmd: python -m src.data.preparar_dataset
     deps:
@@ -65,12 +65,12 @@ stages:
       size: 1196962
     - path: src/config/paths.py
       hash: md5
-      md5: 95c523a1bab4fe449e2a49dd5d921ebc
-      size: 2033
+      md5: 3fe994a2729021fec3a7008eaf8020f0
+      size: 1794
     - path: src/data/preparar_dataset.py
       hash: md5
-      md5: 3297ac53966d024db7aa84a328cf075e
-      size: 12120
+      md5: 552e2f4332aef7ff27a3a7299c19234b
+      size: 13983
     outs:
     - path: dados/dataset_cafeterias_rj_preparado.parquet
       hash: md5

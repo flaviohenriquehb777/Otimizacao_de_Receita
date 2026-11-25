@@ -168,19 +168,35 @@ Os resultados dependem dos coeficientes reais treinados no seu ambiente. A aplic
 - O pipeline publica dois destinos: o bundle de serving em `app/artifacts/` (`best_model.pkl`, `model_card.json`, `metrics_snapshot.json`, `business_curve.csv`) e os artefatos públicos do showcase em `docs/` (`metrics_snapshot.json`, `model_card.json`, `business_curve.csv`).
 - A URL do app no showcase é definida pela constante `APP_URL` no topo do script de `docs/index.html` (preenchida no deploy). Enquanto vazia, o botão do app fica oculto e restam os links do repositório.
 
+### Deploy do app (Streamlit Cloud)
+
+O app é **auto-contido**: lê apenas o bundle versionado em `app/artifacts/` (sem DVC nem a base crua) e nenhum secret é necessário.
+
+1. Em https://share.streamlit.io, escolha **New app** apontando para o repositório `flaviohenriquehb777/Otimizacao_de_Receita`, branch `main`, arquivo principal `app/streamlit_app.py`.
+2. Aguarde o build; o tema Dark já vem de `.streamlit/config.toml`.
+3. Copie a URL pública e preencha a constante `APP_URL` no `docs/index.html` para habilitar o CTA do app no showcase.
+
 ## Integração com DagsHub (MLflow)
 
-Este modelo tem integração opcional com o DagsHub para registrar experimentos no MLflow.
+O treino registra **um run por candidato** no MLflow e marca o campeão (`model_best`).
+Por padrão o tracking é **local** (`mlruns/`); para publicar no DagsHub, exporte
+**apenas** as variáveis namespaced deste projeto (fail-closed — as genéricas
+`DAGSHUB_TOKEN` / `MLFLOW_TRACKING_*` são deliberadamente ignoradas para não herdar
+credenciais de outros projetos):
+
+```bash
+export OTIMIZACAO_DAGSHUB_OWNER="<owner>"
+export OTIMIZACAO_DAGSHUB_REPO="Otimizacao_de_Receita"
+export OTIMIZACAO_MLFLOW_TRACKING_USERNAME="<owner>"
+export OTIMIZACAO_MLFLOW_TRACKING_PASSWORD="<token>"
+uv run python -m src.modeling.train_pipeline
+```
 
 - Repositório no DagsHub (experimentos): https://dagshub.com/flaviohenriquehb777/Otimizacao_de_Receita
-
-Com credenciais configuradas (secrets/variáveis de ambiente), os treinos podem ser registrados no DagsHub via MLflow. Configure:
-
-- `MLFLOW_EXPERIMENT_NAME`: nome do experimento
-- `DAGSHUB_OWNER` e `DAGSHUB_REPO` (usados para montar `MLFLOW_TRACKING_URI` automaticamente quando possível)
-- `DAGSHUB_TOKEN` (ou `MLFLOW_TRACKING_TOKEN`) e, opcionalmente, `MLFLOW_TRACKING_USERNAME`/`MLFLOW_TRACKING_PASSWORD`
-
-Em seguida, habilite no pipeline (ou CI) o log de parâmetros, métricas e artefatos (best model e explicabilidade). Caso as credenciais não estejam configuradas, o pipeline segue com tracking local sem falhar.
+- O token também pode vir por `OTIMIZACAO_MLFLOW_TRACKING_TOKEN` (ou `OTIMIZACAO_DAGSHUB_TOKEN`).
+- Sem credenciais, o pipeline segue com tracking local, sem falhar.
+- A **CI não publica** no DagsHub: os experimentos são registrados localmente/sob demanda,
+  evitando expor segredos nos workflows.
 
 ## Licença:
 
