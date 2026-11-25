@@ -28,7 +28,14 @@ REPORTS_DIR = PROJECT_ROOT / "report"
 DOCS_DIR = PROJECT_ROOT / "docs"
 NOTEBOOKS_DIR = PROJECT_ROOT / "notebooks"
 
-for _dir in (DATA_DIR, MODELS_DIR, REPORTS_DIR):
+# App de decisão (CRISP-DM — Deployment). O `artifacts/` é o **bundle de serving**
+# enxuto e versionado no Git, consumido pelo Streamlit Cloud sem DVC nem a base
+# crua. Os artefatos pesados de treino continuam sob governança do DVC em
+# `models/`; aqui fica apenas a cópia pequena e publicável.
+APP_DIR = PROJECT_ROOT / "app"
+APP_ARTIFACTS_DIR = APP_DIR / "artifacts"
+
+for _dir in (DATA_DIR, MODELS_DIR, REPORTS_DIR, APP_ARTIFACTS_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
 
 

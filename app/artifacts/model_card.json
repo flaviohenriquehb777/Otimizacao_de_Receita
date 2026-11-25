@@ -1,0 +1,118 @@
+{
+  "alvo": "quantidade_vendida_dia",
+  "modelo": "RidgeCV",
+  "objetivo": "Escolher, por SKU/dia, o desconto que maximiza o lucro esperado.",
+  "features_numericas": [
+    "preco_original",
+    "desconto_pct",
+    "preco_final",
+    "custo_producao",
+    "preco_minimo",
+    "preco_competidor",
+    "indice_preco_competidor",
+    "gasto_marketing",
+    "temperatura",
+    "chuva_mm",
+    "mes",
+    "dia_semana_idx",
+    "fim_de_semana",
+    "feriado_flag",
+    "promocao_flag"
+  ],
+  "features_categoricas": [
+    "loja",
+    "produto",
+    "categoria",
+    "canal",
+    "evento_especial",
+    "promocao_tipo",
+    "tipo_produto",
+    "tamanho_embalagem",
+    "perfil_loja"
+  ],
+  "colunas_vetadas_por_vazamento": [
+    "quantidade_vendida_mes",
+    "estoque_disponivel",
+    "custo_marketing_unitario",
+    "ruptura_flag"
+  ],
+  "grade_desconto": [
+    0.0,
+    0.01,
+    0.02,
+    0.03,
+    0.04,
+    0.05,
+    0.06,
+    0.07,
+    0.08,
+    0.09,
+    0.1,
+    0.11,
+    0.12
+  ],
+  "restricao_preco_minimo": "Otimizador respeita `preco_minimo` por linha.",
+  "importancia_features": {
+    "promocao_tipo": 23.622913326669522,
+    "produto": 6.355515906007039,
+    "tamanho_embalagem": 3.699952106400886,
+    "preco_original": 3.59724989283008,
+    "tipo_produto": 3.4368311506315488,
+    "promocao_flag": 3.314233772574545,
+    "preco_final": 3.1905474352659047,
+    "categoria": 1.5141118137970238,
+    "evento_especial": 0.6093252616088067,
+    "desconto_pct": 0.3699424713852788,
+    "loja": 0.2631541184730901,
+    "perfil_loja": 0.2631541184730901,
+    "dia_semana_idx": 0.19360724174033805,
+    "preco_competidor": 0.13416632840167697,
+    "custo_producao": 0.09326928849309946,
+    "temperatura": 0.08229154648558312,
+    "fim_de_semana": 0.07457339195964385,
+    "mes": 0.06573461071071618,
+    "feriado_flag": 0.047303590200971246,
+    "chuva_mm": 0.04725725070255593,
+    "indice_preco_competidor": 0.027502571644829277,
+    "preco_minimo": 0.009820325747943226,
+    "gasto_marketing": 0.004978496444508318,
+    "canal": 0.0015843945698320594
+  },
+  "metricas_teste": {
+    "rmse": 0.843921759699341,
+    "mae": 0.489515983176415,
+    "r2": 0.8965845061549387,
+    "mae_ratio": 0.2615490117007923,
+    "lucro_baseline": 156.42989353555586,
+    "lucro_politica": 162.12458420084633,
+    "uplift_pct": 3.6404107530739234,
+    "desconto_medio": 0.051077898550724636,
+    "pct_linhas_com_desconto": 0.5287590579710145
+  },
+  "honestidade": "Métricas de demanda no teste são factuais (demanda observada vs. prevista). O lucro da política é uma estimativa contrafactual (a demanda sob descontos alternativos é prevista pelo modelo), não um resultado realizado; use o baseline ingênuo como calibração do ganho esperado.",
+  "proveniencia": {
+    "seed": 42,
+    "gerado_em": "2026-11-25T12:49:53+00:00",
+    "commit": "local",
+    "hash_dados": "f495cd37a2149bc6",
+    "linhas_por_split": {
+      "treino": 26256,
+      "validacao": 4416,
+      "teste": 4416
+    },
+    "periodos": {
+      "treino": [
+        "2024-01-01",
+        "2025-06-30"
+      ],
+      "validacao": [
+        "2025-07-01",
+        "2025-09-30"
+      ],
+      "teste": [
+        "2025-10-01",
+        "2025-12-31"
+      ]
+    }
+  }
+}
