@@ -1,0 +1,11 @@
+# Tema do app (obrigatório: Dark) — Otimização de Receita.
+[theme]
+base = "dark"
+primaryColor = "#E8A33D"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#171A21"
+textColor = "#E6E6E6"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false

@@ -1,0 +1,132 @@
+{
+  "alvo": "quantidade_vendida_dia",
+  "modelo": "RidgeCV",
+  "validacao": {
+    "rmse": 0.7874939907922534,
+    "mae": 0.4657419248317118,
+    "r2": 0.8853079727360007,
+    "mae_ratio": 0.2727378782730194,
+    "lucro_baseline": 143.19460046809326,
+    "lucro_politica": 149.53414828743715,
+    "uplift_pct": 4.427225467036012,
+    "desconto_medio": 0.054662590579710145,
+    "pct_linhas_com_desconto": 0.5561594202898551
+  },
+  "teste": {
+    "rmse": 0.843921759699341,
+    "mae": 0.489515983176415,
+    "r2": 0.8965845061549387,
+    "mae_ratio": 0.2615490117007923,
+    "lucro_baseline": 156.42989353555586,
+    "lucro_politica": 162.12458420084633,
+    "uplift_pct": 3.6404107530739234,
+    "desconto_medio": 0.051077898550724636,
+    "pct_linhas_com_desconto": 0.5287590579710145
+  },
+  "baselines": {
+    "rmse_media_global": 2.6314348641834524,
+    "rmse_media_sku": 1.451492782029669,
+    "media_alvo_treino": 1.677621283255086
+  },
+  "candidatos": [
+    {
+      "modelo": "RidgeCV",
+      "params": {
+        "alphas": "logspace(-3,3,13)"
+      },
+      "validacao": {
+        "rmse": 0.7874939907922534,
+        "mae": 0.4657419248317118,
+        "r2": 0.8853079727360007,
+        "mae_ratio": 0.2727378782730194,
+        "lucro_baseline": 143.19460046809326,
+        "lucro_politica": 149.53414828743715,
+        "uplift_pct": 4.427225467036012,
+        "desconto_medio": 0.054662590579710145,
+        "pct_linhas_com_desconto": 0.5561594202898551
+      }
+    },
+    {
+      "modelo": "RandomForest",
+      "params": {
+        "n_estimators": 300,
+        "min_samples_leaf": 5
+      },
+      "validacao": {
+        "rmse": 0.6415183520232081,
+        "mae": 0.33991673834225894,
+        "r2": 0.9238873396520466,
+        "mae_ratio": 0.19905480924538066,
+        "lucro_baseline": 142.18866285158978,
+        "lucro_politica": 147.5663965282899,
+        "uplift_pct": 3.7821114348006573,
+        "desconto_medio": 0.0352241847826087,
+        "pct_linhas_com_desconto": 0.3854166666666667
+      }
+    },
+    {
+      "modelo": "HistGradientBoosting",
+      "params": {
+        "max_iter": 400,
+        "learning_rate": 0.06
+      },
+      "validacao": {
+        "rmse": 0.6138880226062468,
+        "mae": 0.3595076605533071,
+        "r2": 0.9303025237604585,
+        "mae_ratio": 0.2105272283521289,
+        "lucro_baseline": 141.01862964971852,
+        "lucro_politica": 143.3373230719243,
+        "uplift_pct": 1.6442461736901421,
+        "desconto_medio": 0.021682518115942028,
+        "pct_linhas_com_desconto": 0.3541666666666667
+      }
+    },
+    {
+      "modelo": "XGBoostPoisson",
+      "params": {
+        "objective": "count:poisson",
+        "n_estimators": 600,
+        "learning_rate": 0.03,
+        "monotone_constraints": "preco_final=-1, desconto_pct=+1"
+      },
+      "validacao": {
+        "rmse": 0.6310037689636805,
+        "mae": 0.353682275095549,
+        "r2": 0.9263618890572465,
+        "mae_ratio": 0.20711589004401862,
+        "lucro_baseline": 138.3952693439282,
+        "lucro_politica": 144.44991772345298,
+        "uplift_pct": 4.374895477444603,
+        "desconto_medio": 0.03713541666666667,
+        "pct_linhas_com_desconto": 0.5731431159420289
+      }
+    }
+  ],
+  "proveniencia": {
+    "seed": 42,
+    "gerado_em": "2026-11-25T12:49:53+00:00",
+    "commit": "local",
+    "hash_dados": "f495cd37a2149bc6",
+    "linhas_por_split": {
+      "treino": 26256,
+      "validacao": 4416,
+      "teste": 4416
+    },
+    "periodos": {
+      "treino": [
+        "2024-01-01",
+        "2025-06-30"
+      ],
+      "validacao": [
+        "2025-07-01",
+        "2025-09-30"
+      ],
+      "teste": [
+        "2025-10-01",
+        "2025-12-31"
+      ]
+    }
+  },
+  "honestidade": "Métricas de demanda no teste são factuais (demanda observada vs. prevista). O lucro da política é uma estimativa contrafactual (a demanda sob descontos alternativos é prevista pelo modelo), não um resultado realizado; use o baseline ingênuo como calibração do ganho esperado."
+}

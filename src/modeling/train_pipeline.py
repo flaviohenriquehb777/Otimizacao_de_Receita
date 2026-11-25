@@ -60,7 +60,7 @@ from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_err
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from src.config.paths import DADOS_CAFETERIAS_PREPARADO, MODELS_DIR
+from src.config.paths import APP_ARTIFACTS_DIR, DADOS_CAFETERIAS_PREPARADO, MODELS_DIR
 from src.data.preparar_dataset import colunas_com_vazamento
 
 try:  # XGBoost é opcional para não travar ambientes mínimos.
@@ -217,8 +217,12 @@ def _hash_dados(df: pd.DataFrame) -> str:
 # --- 2) Otimizador de preço ---------------------------------------------------
 
 
-def _aplicar_desconto(X: pd.DataFrame, desconto: float) -> pd.DataFrame:
-    """Reescreve o cenário para um desconto `d`, mantendo as features coerentes."""
+def aplicar_desconto(X: pd.DataFrame, desconto: float) -> pd.DataFrame:
+    """Reescreve o cenário para um desconto `d`, mantendo as features coerentes.
+
+    Público porque é parte do **contrato de serving**: o app reusa exatamente
+    esta regra de negócio (sem duplicar a lógica) ao simular um cenário.
+    """
     Xd = X.copy()
     preco_final = (X["preco_original"] * (1.0 - desconto)).round(2)
     Xd["desconto_pct"] = desconto
@@ -243,7 +247,7 @@ def matriz_lucro(
 
     lucro = np.empty((len(X), len(grade)), dtype=float)
     for j, d in enumerate(grade):
-        qtd = np.asarray(modelo.predict(_aplicar_desconto(X, float(d))), dtype=float)
+        qtd = np.asarray(modelo.predict(aplicar_desconto(X, float(d))), dtype=float)
         preco = preco_original * (1.0 - float(d))
         lucro[:, j] = (preco - custo) * qtd
 
@@ -488,7 +492,7 @@ def _curva_negocio(
     """Curva média prevista (demanda/receita/lucro) por desconto, para o site/app."""
     linhas = []
     for d in grade:
-        qtd = np.asarray(modelo.predict(_aplicar_desconto(X, float(d))), dtype=float)
+        qtd = np.asarray(modelo.predict(aplicar_desconto(X, float(d))), dtype=float)
         preco = X["preco_original"].to_numpy(dtype=float) * (1.0 - float(d))
         receita = preco * qtd
         lucro = (preco - X["custo_producao"].to_numpy(dtype=float)) * qtd
@@ -832,6 +836,64 @@ def _nota_honestidade() -> str:
     )
 
 
+# --- 7) Bundle de serving do app (CRISP-DM — Deployment) ----------------------
+
+# Artefatos pequenos, versionados no Git, que o app (Streamlit Cloud) consome
+# sem DVC nem a base crua. O `test_predictions.parquet` fica de fora: é
+# diagnóstico pesado e permanece sob governança do DVC em `models/`.
+BUNDLE_APP: tuple[str, ...] = (
+    "best_model.pkl",
+    "model_card.json",
+    "metrics_snapshot.json",
+    "business_curve.csv",
+)
+
+
+def catalogo_app(df: pd.DataFrame) -> dict[str, object]:
+    """Domínios das categóricas + cenários-tipo para o app montar linhas válidas.
+
+    Os templates vêm apenas de treino+validação (o "passado"), nunca do teste,
+    para não vazar o futuro para dentro do simulador. Cada template é a última
+    observação de um par (loja, produto), isto é, um vetor de features **real e
+    coerente** — o app o usa como base e só sobrescreve as alavancas de decisão.
+    """
+    passado = df[df["split"].isin(("treino", "validacao"))]
+    features = list(FEATURES_NUMERICAS + FEATURES_CATEGORICAS)
+    dominios = {
+        coluna: sorted(passado[coluna].dropna().unique().tolist())
+        for coluna in FEATURES_CATEGORICAS
+    }
+    ultima = (
+        passado.sort_values("data").groupby(["loja", "produto"], as_index=False).last()
+    )
+    # `to_json` normaliza os tipos numpy/pandas e converte NaN em `null`.
+    templates = sorted(
+        json.loads(ultima[features].to_json(orient="records")),
+        key=lambda linha: (linha["loja"], linha["produto"]),
+    )
+    return {
+        "alvo": TARGET,
+        "features_numericas": list(FEATURES_NUMERICAS),
+        "features_categoricas": list(FEATURES_CATEGORICAS),
+        "grade_desconto": [float(d) for d in GRADE_DESCONTO],
+        "dominios": dominios,
+        "templates": templates,
+        "colunas_vetadas_por_vazamento": list(colunas_com_vazamento()),
+    }
+
+
+def publicar_bundle_app(df: pd.DataFrame) -> Path:
+    """Publica o bundle de serving (catálogo + cópias pequenas) em `app/artifacts/`."""
+    APP_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    catalogo = APP_ARTIFACTS_DIR / "app_catalog.json"
+    catalogo.write_text(
+        json.dumps(catalogo_app(df), indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    for nome in BUNDLE_APP:
+        (APP_ARTIFACTS_DIR / nome).write_bytes((MODELS_DIR / nome).read_bytes())
+    return APP_ARTIFACTS_DIR
+
+
 def main() -> None:
     """Executa o pipeline de modelagem e persiste o contrato de artefatos."""
     init_tracking()
@@ -889,7 +951,10 @@ def main() -> None:
     caminho_cenarios = MODELS_DIR / "test_predictions.parquet"
     resultado["cenarios"].to_parquet(caminho_cenarios, index=False)  # type: ignore[union-attr]
 
-    # (6) Tracking: um run por candidato no MLflow/DagsHub, campeão = model_best.
+    # (6) Bundle de serving do app: catálogo + cópias pequenas versionadas no Git.
+    destino_app = publicar_bundle_app(df)
+
+    # (7) Tracking: um run por candidato no MLflow/DagsHub, campeão = model_best.
     registrar_experimentos(
         resultado,
         [
@@ -907,7 +972,8 @@ def main() -> None:
         f"mae={resultado['teste']['mae']:.3f} r2={resultado['teste']['r2']:.3f}\n"
         f"Teste (negócio): uplift={resultado['teste']['uplift_pct']:.2f}% "
         f"desconto médio={resultado['teste']['desconto_medio']:.3f}\n"
-        f"Artefatos em: {MODELS_DIR}"
+        f"Artefatos em: {MODELS_DIR}\n"
+        f"Bundle do app em: {destino_app}"
     )
 
 

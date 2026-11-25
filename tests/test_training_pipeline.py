@@ -17,7 +17,6 @@ from src.modeling.train_pipeline import (
     FEATURES_NUMERICAS,
     GRADE_DESCONTO,
     TARGET,
-    main,
 )
 
 
@@ -28,9 +27,8 @@ def _carregar_json(nome: str) -> dict:
 
 
 @pytest.fixture(scope="module")
-def artefatos() -> dict:
-    """Executa o pipeline uma vez e devolve o snapshot + o cartão de modelo."""
-    main()
+def artefatos(treino_executado: None) -> dict:
+    """Lê o snapshot + o cartão publicados pelo pipeline (treino roda 1x/sessão)."""
     return {
         "snapshot": _carregar_json("metrics_snapshot.json"),
         "cartao": _carregar_json("model_card.json"),
