@@ -92,7 +92,7 @@
   "honestidade": "Métricas de demanda no teste são factuais (demanda observada vs. prevista). O lucro da política é uma estimativa contrafactual (a demanda sob descontos alternativos é prevista pelo modelo), não um resultado realizado; use o baseline ingênuo como calibração do ganho esperado.",
   "proveniencia": {
     "seed": 42,
-    "gerado_em": "2026-11-25T13:03:34+00:00",
+    "gerado_em": "2026-11-25T13:13:29+00:00",
     "commit": "local",
     "hash_dados": "f495cd37a2149bc6",
     "linhas_por_split": {

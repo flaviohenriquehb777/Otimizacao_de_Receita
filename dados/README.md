@@ -1,11 +1,15 @@
-Este diretório armazena dados locais não versionados.
+Este diretório armazena o dataset canônico em **Parquet**, **não versionado** no
+Git — a governança de dados é do **DVC** (ver `dvc.yaml` / `dvc.lock`).
 
-Arquivos como `dataset_cafeterias_rj.xlsx` são ignorados pelo Git (ver `.gitignore`).
+Arquivos gerados pelo pipeline:
+- `dataset_cafeterias_rj.parquet`: base bruta calibrada (`src.data.gerar_dataset`).
+- `dataset_cafeterias_rj_preparado.parquet`: base preparada, com features
+  leakage-safe e split temporal (`src.data.preparar_dataset`).
 
-Como obter o dataset:
-- Coloque o arquivo `dataset_cafeterias_rj.xlsx` em `dados/` antes de executar o pipeline.
-- Caso não possua o dataset, o pipeline pode gerar dados sintéticos para testes.
+Reprodução determinística (`SEED = 42`):
+
+    uv run dvc repro
 
 Boas práticas:
-- Não versionar dados sensíveis em GitHub.
-- Usar storage remoto (ex.: DagsHub datasets, S3) ou DVC para controle de versões de dados.
+- Não versionar dados no Git.
+- Transportar/versionar os dados via DVC (remote remoto), nunca no repositório.
