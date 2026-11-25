@@ -1,0 +1,15 @@
+# Dependências de execução do app de decisão (Streamlit Community Cloud).
+#
+# O Streamlit Community Cloud NÃO lê o pyproject.toml/uv nativamente (ver
+# issue streamlit/streamlit#9502); ele instala a partir de um arquivo de
+# dependências. Como o entrypoint é `app/streamlit_app.py`, este arquivo em
+# `app/` tem precedência sobre a raiz do repositório.
+#
+# Mantido enxuto: apenas o runtime do bundle de serving (`app/artifacts/`),
+# sem DVC, MLflow, XGBoost, ONNX ou a base crua. `scipy`/`threadpoolctl` são
+# transitivas do scikit-learn e resolvidas automaticamente.
+streamlit>=1.36,<2
+pandas>=2.2,<3
+numpy>=1.26,<2
+scikit-learn>=1.4,<1.6
+joblib>=1.4,<2
