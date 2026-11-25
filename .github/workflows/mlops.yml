@@ -26,7 +26,7 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Instalar dependências (uv sync)
-        run: uv sync --frozen
+        run: uv sync --frozen --all-groups
 
       - name: Gerar dataset determinístico
         run: |
