@@ -10,9 +10,10 @@ import json
 import pandas as pd
 import pytest
 
-from src.config.paths import MODELS_DIR
+from src.config.paths import DOCS_DIR, MODELS_DIR
 from src.data.preparar_dataset import colunas_com_vazamento
 from src.modeling.train_pipeline import (
+    BUNDLE_DOCS,
     FEATURES_CATEGORICAS,
     FEATURES_NUMERICAS,
     GRADE_DESCONTO,
@@ -102,3 +103,11 @@ def test_curva_de_negocio_cobre_a_grade() -> None:
     ):
         assert coluna in curva.columns
     assert (curva["qtd_media_prevista"] >= 0).all()
+
+
+def test_site_publica_apenas_os_artefatos_publicos() -> None:
+    """O showcase do Pages consome só os artefatos públicos — nunca o `.pkl`."""
+    for nome in BUNDLE_DOCS:
+        assert (DOCS_DIR / nome).exists(), f"Faltou no site: {nome}"
+    assert not (DOCS_DIR / "best_model.pkl").exists(), "O modelo não vai para o site."
+    assert "best_model.pkl" not in BUNDLE_DOCS

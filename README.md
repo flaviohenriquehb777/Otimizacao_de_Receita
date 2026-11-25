@@ -60,6 +60,7 @@ Este modelo foca na aplicação de Machine Learning (Regressão Linear) para ana
   - `data/preparar_dataset.py`: validação fail-closed, limpeza, features leakage-safe e split temporal
   - `modeling/train_pipeline.py`: treino, seleção do melhor modelo e publicação de artefatos
 - `models/`: artefatos do treino, governados pelo **DVC** (fora do Git).
+- `app/`: app de decisão (**Streamlit**, tema Dark) e o bundle de serving enxuto em `app/artifacts/` (versionado no Git).
 - `dvc.yaml` / `dvc.lock`: definição e travas do pipeline (`gerar_dados → preparar_dados → train`).
 - `docs/`: site estático (GitHub Pages) que consome os artefatos publicados pelo treino.
 - `.github/workflows/`: CI (testes/qualidade) e MLOps (pipeline + publicação).
@@ -108,9 +109,8 @@ Os resultados dependem dos coeficientes reais treinados no seu ambiente. A aplic
 * **Scikit-learn (sklearn):** Para pré-processamento e modelagem (LinearRegression, Pipeline), divisão de dados (train_test_split) e avaliação de modelos (RMSE, MAE, R²).
 * **Matplotlib:** Para criação de gráficos, especialmente a curva de aprendizagem.
 * **Seaborn:** Para visualizações estatísticas e aprimoramento estético dos gráficos.
-* **XGBoost:** Como candidato não linear com restrições monotônicas e regularização.
-* **ONNX + skl2onnx/onnxmltools:** Exportação do Best Model para uso estático no navegador.
-* **onnxruntime-web:** Execução do modelo ONNX diretamente no browser.
+* **XGBoost:** Como candidato não linear com restrições condicionais ao alvo.
+* **Streamlit + Altair:** App de decisão (tema Dark) que consome o modelo real e a lógica de negócio real.
 
 ## Instalação e Uso
 
@@ -161,22 +161,12 @@ Os resultados dependem dos coeficientes reais treinados no seu ambiente. A aplic
 - A mesma lógica de preparação usada no pipeline é reaproveitada pelos notebooks e pelo app — sem duplicação.
 - A CI instala dependências, roda `pytest` e valida o pipeline; o workflow de MLOps reproduz e publica os artefatos.
 
-## Modelo na página vs Best Model
+## Showcase (GitHub Pages) e App de Decisão
 
-- A aplicação web em `docs/index.html` utiliza `docs/model_linear.json` para prever quantidade e calcular receita/lucro no gráfico de previsão linear.
-- O pipeline seleciona o **Best Model** por lucro esperado em validação (ex.: `GradientBoosting`). Esse modelo é salvo em `models/best_model_max_receita.pkl` e seus artefatos (curva de negócio, métricas) são registrados.
- - A página agora suporta três visualizações:
-   - `Gráfico de previsão linear`: usa o JSON linear para varrer descontos e calcular receita/lucro previstos.
-   - `Previsão BEST (ONNX)`: usa o modelo não linear exportado em ONNX (`docs/model_best.onnx`) rodando no navegador com `onnxruntime-web`.
-   - `Curva de referência`: usa `docs/curve_business_metric.csv`, gerada no treino, para visualizar as médias de receita/lucro do dataset.
- - Publicação dos artefatos para a página:
-   - Após `python -m src.modeling.train_pipeline`, os arquivos são gerados em `models/` e também publicados em `docs/`:
-     - `docs/model_linear.json` (baseline linear para compatibilidade)
-     - `docs/model_best.onnx` e `docs/model_best_meta.json` (ordem das features) para a visualização BEST
-     - `docs/curve_business_metric.csv` (curva média de negócio)
- - Dependências adicionadas para exportação e execução do ONNX: `onnx`, `skl2onnx`, `onnxmltools`. No front-end, o `index.html` importa `onnxruntime-web` via CDN.
- - Melhorias no XGBoost: as restrições monotônicas são condicionais ao alvo. Para alvo **receita** (`receita_*`), mantemos restrições **neutras** (desativadas) para evitar vieses; para alvo **quantidade** (`quantidade_*`), aplicamos sinais alinhados ao domínio (`custo_producao`, `preco_original` e `preco_final` negativos; `desconto_pct` positivo), com regularização (`reg_lambda`, `min_child_weight`) e `tree_method='hist'` para estabilidade e desempenho.
- - Observação: a escolha do Best Model (tipicamente não linear, como `GradientBoosting` ou `XGBoost`) impacta as curvas e o ponto ótimo. A execução ONNX no navegador permite previsões fiéis sem servidor, mantendo uma experiência profissional e estática.
+- O **app de decisão** (`app/streamlit_app.py`, tema Dark) consome o **modelo real** e a **lógica de negócio real** — os mesmos `aplicar_desconto`/otimizador do pipeline, sem duplicação. Ele lê o bundle de serving enxuto em `app/artifacts/` (sem DVC nem a base crua).
+- O **showcase** em `docs/index.html` (GitHub Pages) é uma página estática de leitura: exibe o cartão de modelo, o snapshot de métricas e a curva de negócio publicados pelo treino, além do link para o app. Não há inferência no navegador — a interatividade fica no app.
+- O pipeline publica dois destinos: o bundle de serving em `app/artifacts/` (`best_model.pkl`, `model_card.json`, `metrics_snapshot.json`, `business_curve.csv`) e os artefatos públicos do showcase em `docs/` (`metrics_snapshot.json`, `model_card.json`, `business_curve.csv`).
+- A URL do app no showcase é definida pela constante `APP_URL` no topo do script de `docs/index.html` (preenchida no deploy). Enquanto vazia, o botão do app fica oculto e restam os links do repositório.
 
 ## Integração com DagsHub (MLflow)
 
