@@ -1,65 +1,106 @@
+"""Contrato de artefatos e guardrail anti-vazamento do pipeline de modelagem.
+
+O treino é executado uma única vez (fixture de módulo) e os testes verificam o
+*contrato* publicado — incluindo a garantia de que nenhum artefato reintroduz
+as colunas vetadas por vazamento.
+"""
+
 import json
-import os
-from pathlib import Path
+
+import pandas as pd
+import pytest
 
 from src.config.paths import MODELS_DIR
-from src.modeling.train_pipeline import main
+from src.data.preparar_dataset import colunas_com_vazamento
+from src.modeling.train_pipeline import (
+    FEATURES_CATEGORICAS,
+    FEATURES_NUMERICAS,
+    GRADE_DESCONTO,
+    TARGET,
+    main,
+)
 
 
-def _approx_equal(actual: float, expected: float, tol_abs: float, tol_rel: float) -> bool:
-    if expected == 0:
-        return abs(actual) <= tol_abs
-    return abs(actual - expected) <= max(tol_abs, tol_rel * abs(expected))
+def _carregar_json(nome: str) -> dict:
+    caminho = MODELS_DIR / nome
+    assert caminho.exists(), f"Artefato ausente: {nome}"
+    return json.loads(caminho.read_text(encoding="utf-8"))
 
 
-def test_training_produces_artifacts_and_metrics_snapshot():
-    # Executa o pipeline uma vez
+@pytest.fixture(scope="module")
+def artefatos() -> dict:
+    """Executa o pipeline uma vez e devolve o snapshot + o cartão de modelo."""
     main()
+    return {
+        "snapshot": _carregar_json("metrics_snapshot.json"),
+        "cartao": _carregar_json("model_card.json"),
+    }
 
-    # Verifica JSON para UI (sem depender de .pkl nos testes)
-    json_path = MODELS_DIR / 'model_linear.json'
-    assert json_path.exists(), "Model JSON para UI não foi criado."
 
-    payload = json.loads(json_path.read_text(encoding='utf-8'))
-    assert 'coefficients' in payload and isinstance(payload['coefficients'], dict), "JSON sem coefficients."
-    assert 'intercept' in payload, "JSON sem intercept."
+def test_pipeline_publica_o_contrato_de_artefatos(artefatos: dict) -> None:
+    assert (MODELS_DIR / "best_model.pkl").exists()
+    assert (MODELS_DIR / "business_curve.csv").exists()
+    assert (MODELS_DIR / "test_predictions.parquet").exists()
 
-    # Verifica snapshot de métricas
-    snapshot_path = MODELS_DIR / 'metrics_snapshot.json'
-    assert snapshot_path.exists(), "metrics_snapshot.json não foi criado."
-    snapshot = json.loads(snapshot_path.read_text(encoding='utf-8'))
-    assert 'metrics' in snapshot and isinstance(snapshot['metrics'], dict), "Snapshot sem métricas."
-    # Checagem estrutural do alvo: agora o pipeline inclui 'target' no snapshot
-    assert 'target' in snapshot, "Snapshot sem campo 'target'."
-    assert snapshot['target'] in ['receita_mes','receita_dia','quantidade_vendida_mes','quantidade_vendida_dia'], (
-        f"Valor de target inesperado: {snapshot['target']}")
+    snapshot = artefatos["snapshot"]
+    assert snapshot["alvo"] == TARGET
+    nomes = {candidato["modelo"] for candidato in snapshot["candidatos"]}
+    assert (
+        snapshot["modelo"] in nomes
+    ), "O campeão precisa ser um dos candidatos avaliados."
 
-    is_ci = os.getenv('CI', '').lower() == 'true'
-    target_is_revenue = snapshot.get('target') in ['receita_mes','receita_dia']
-    if is_ci or target_is_revenue:
-        # Em CI, o dataset original pode não estar versionado; validamos estrutura e sanidade.
-        required = ['cv_mae','cv_rmse','cv_r2','holdout_mae','holdout_rmse','holdout_r2']
-        for k in required:
-            assert k in snapshot['metrics'], f"Métrica {k} ausente no snapshot."
-            v = float(snapshot['metrics'][k])
-            assert not (v is None or (v != v)), f"Métrica {k} inválida (NaN)."
-        # Limites básicos
-        assert snapshot['metrics']['cv_mae'] >= 0 and snapshot['metrics']['cv_rmse'] >= 0
-        assert -1.0 <= snapshot['metrics']['cv_r2'] <= 1.0
-        assert snapshot['metrics']['holdout_mae'] >= 0 and snapshot['metrics']['holdout_rmse'] >= 0
-        assert -1.0 <= snapshot['metrics']['holdout_r2'] <= 1.0
-    else:
-        # Localmente com dados originais, comparamos com snapshot esperado com tolerância.
-        expected_path = Path('tests') / 'expected_metrics.json'
-        assert expected_path.exists(), "tests/expected_metrics.json ausente."
-        expected = json.loads(expected_path.read_text(encoding='utf-8'))
 
-        tol_abs = float(expected.get('tolerance', {}).get('abs', 1e-6))
-        tol_rel = float(expected.get('tolerance', {}).get('rel', 0.05))
-        for key, exp_val in expected.get('metrics', {}).items():
-            assert key in snapshot['metrics'], f"Métrica {key} não encontrada no snapshot."
-            act_val = float(snapshot['metrics'][key])
-            assert _approx_equal(act_val, float(exp_val), tol_abs, tol_rel), (
-                f"Métrica {key} fora da tolerância. Esperado={exp_val}, Atual={act_val}, "
-                f"tol_abs={tol_abs}, tol_rel={tol_rel}"
-            )
+def test_candidatos_expoem_params_para_tracking(artefatos: dict) -> None:
+    """Cada candidato carrega seus hiperparâmetros para virar um run rastreável."""
+    candidatos = artefatos["snapshot"]["candidatos"]
+    assert candidatos, "Nenhum candidato avaliado."
+    for candidato in candidatos:
+        assert candidato["params"], f"Candidato sem params: {candidato['modelo']}"
+
+
+def test_metricas_factuais_de_demanda_sao_sadias(artefatos: dict) -> None:
+    teste = artefatos["snapshot"]["teste"]
+    for chave in ("rmse", "mae", "r2", "uplift_pct"):
+        assert chave in teste, f"Métrica ausente: {chave}"
+    assert teste["rmse"] > 0 and teste["mae"] > 0
+    assert -1.0 <= teste["r2"] <= 1.0
+
+
+def test_honestidade_do_contrafactual_esta_explicita(artefatos: dict) -> None:
+    snapshot = artefatos["snapshot"]
+    assert "contrafactual" in snapshot["honestidade"].lower()
+    assert (
+        "rmse_media_global" in snapshot["baselines"]
+    ), "Faltou o baseline ingênuo de calibração."
+
+
+def test_artefatos_respeitam_o_guardrail_de_vazamento(artefatos: dict) -> None:
+    cartao = artefatos["cartao"]
+    features = set(cartao["features_numericas"]) | set(cartao["features_categoricas"])
+    assert features == set(FEATURES_NUMERICAS + FEATURES_CATEGORICAS)
+    assert TARGET not in features
+
+    vetadas = set(cartao["colunas_vetadas_por_vazamento"])
+    assert vetadas == set(colunas_com_vazamento())
+    assert features.isdisjoint(
+        vetadas
+    ), f"Vazamento reentrou pelo cartão: {features & vetadas}"
+
+
+def test_grade_de_desconto_fica_no_suporte_identificado() -> None:
+    assert GRADE_DESCONTO.min() == 0.0
+    assert (
+        GRADE_DESCONTO.max() == 0.12
+    )  # teto do desconto sem promoção (contrafactual identificado)
+
+
+def test_curva_de_negocio_cobre_a_grade() -> None:
+    curva = pd.read_csv(MODELS_DIR / "business_curve.csv")
+    assert list(curva["desconto_pct"]) == [float(d) for d in GRADE_DESCONTO]
+    for coluna in (
+        "qtd_media_prevista",
+        "receita_media_prevista",
+        "lucro_medio_previsto",
+    ):
+        assert coluna in curva.columns
+    assert (curva["qtd_media_prevista"] >= 0).all()

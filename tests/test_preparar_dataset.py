@@ -32,6 +32,9 @@ def _df_exemplo(datas: list[str], desconto: float = 0.10) -> pd.DataFrame:
             "preco_competidor": 95.0,
             "quantidade_vendida_dia": 10,
             "quantidade_vendida_mes": 300,  # agregado do próprio mês (vazamento)
+            "estoque_disponivel": 14,  # derivado da demanda do dia (vazamento)
+            "ruptura_flag": 0,  # desfecho do dia (vazamento)
+            "custo_marketing_unitario": 5.0,  # gasto/quantidade (vazamento)
             "promocao_flag": 0,
         }
         for d in datas
@@ -57,10 +60,22 @@ def test_vazamento_excluido_das_features():
         prep.engenharia_features(prep.limpar_dados(_df_exemplo(["2024-01-01"])))
     )
     features = prep.selecionar_features(df)
-    assert "quantidade_vendida_mes" in prep.colunas_com_vazamento()
-    assert "quantidade_vendida_mes" not in features, "Vazamento não foi excluído das features."
+    # O guardrail precisa cobrir agregados temporais E desfechos do dia-alvo.
+    for coluna in (
+        "quantidade_vendida_mes",
+        "estoque_disponivel",
+        "ruptura_flag",
+        "custo_marketing_unitario",
+    ):
+        assert coluna in prep.colunas_com_vazamento(), f"{coluna} ausente do guardrail."
+        assert coluna not in features, f"{coluna} vazou para as features."
     # Alvos nunca entram como preditoras.
-    for alvo in ("receita_dia", "lucro_dia", "margem_unitaria", "quantidade_vendida_dia"):
+    for alvo in (
+        "receita_dia",
+        "lucro_dia",
+        "margem_unitaria",
+        "quantidade_vendida_dia",
+    ):
         assert alvo not in features
 
 
@@ -75,7 +90,11 @@ def test_split_temporal_estrito():
 
 
 def test_split_sem_futuro_no_treino():
-    datas = pd.date_range("2024-01-01", "2025-12-31", freq="D").strftime("%Y-%m-%d").tolist()
+    datas = (
+        pd.date_range("2024-01-01", "2025-12-31", freq="D")
+        .strftime("%Y-%m-%d")
+        .tolist()
+    )
     df = prep.marcar_split_temporal(_df_exemplo(datas))
     treino = df[df["split"] == "treino"]
     assert treino["data"].max() <= pd.Timestamp(prep.DATA_CORTE_TREINO)
@@ -83,19 +102,28 @@ def test_split_sem_futuro_no_treino():
 
 
 def test_features_derivadas_sao_consistentes():
-    df = prep.engenharia_features(prep.limpar_dados(_df_exemplo(["2024-01-01"], desconto=0.20)))
+    df = prep.engenharia_features(
+        prep.limpar_dados(_df_exemplo(["2024-01-01"], desconto=0.20))
+    )
     linha = df.iloc[0]
-    assert linha["receita_dia"] == pytest.approx(linha["preco_final"] * linha["quantidade_vendida_dia"])
+    assert linha["receita_dia"] == pytest.approx(
+        linha["preco_final"] * linha["quantidade_vendida_dia"]
+    )
     assert linha["lucro_dia"] == pytest.approx(
-        (linha["preco_final"] - linha["custo_producao"]) * linha["quantidade_vendida_dia"]
+        (linha["preco_final"] - linha["custo_producao"])
+        * linha["quantidade_vendida_dia"]
     )
     assert 0.0 <= linha["margem_unitaria"] <= 1.0
 
 
-@pytest.mark.skipif(not BRUTO_CANONICO.exists(), reason="Base bruta canônica ausente (rode dvc repro).")
+@pytest.mark.skipif(
+    not BRUTO_CANONICO.exists(), reason="Base bruta canônica ausente (rode dvc repro)."
+)
 def test_integracao_base_canonica_perfeita():
     df = prep.carregar_dados_brutos()
-    assert prep.validar_esquema(df) == [], "A base canônica bruta deve passar na validação."
+    assert (
+        prep.validar_esquema(df) == []
+    ), "A base canônica bruta deve passar na validação."
     preparado = prep.preparar()
     assert set(preparado["split"].unique()) == {"treino", "validacao", "teste"}
     assert preparado["data"].is_monotonic_increasing
@@ -103,7 +131,29 @@ def test_integracao_base_canonica_perfeita():
     # Os únicos nulos permitidos são as datas de promoção ausente (semânticos).
     nulos = preparado.isna().sum()
     colunas_com_nulo = set(nulos[nulos > 0].index)
-    assert colunas_com_nulo <= set(prep.colunas_nulas_intencionais()), (
-        f"Nulos inesperados em: {colunas_com_nulo - set(prep.colunas_nulas_intencionais())}"
-    )
+    assert colunas_com_nulo <= set(
+        prep.colunas_nulas_intencionais()
+    ), f"Nulos inesperados em: {colunas_com_nulo - set(prep.colunas_nulas_intencionais())}"
     assert prep.resumo_qualidade(preparado)["nulos_totais"] == 0
+
+
+@pytest.mark.skipif(
+    not BRUTO_CANONICO.exists(), reason="Base bruta canônica ausente (rode dvc repro)."
+)
+def test_auditoria_de_vazamento_na_base_canonica():
+    """Regressão da auditoria: as colunas vetadas realmente carregam sinal do alvo."""
+    preparado = prep.preparar()
+    alvo = preparado["quantidade_vendida_dia"]
+
+    # Agregado temporal e desfecho derivado da demanda têm sinal forte com o alvo.
+    for coluna, limite in (
+        ("quantidade_vendida_mes", 0.5),
+        ("estoque_disponivel", 0.5),
+    ):
+        corr = abs(float(preparado[coluna].corr(alvo)))
+        assert corr > limite, f"{coluna} deveria vazar o alvo (|corr|={corr:.3f})."
+
+    # E todo o guardrail precisa ficar fora das features.
+    assert set(prep.colunas_com_vazamento()).isdisjoint(
+        prep.selecionar_features(preparado)
+    )

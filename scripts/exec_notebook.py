@@ -5,10 +5,14 @@ from pathlib import Path
 
 import nbformat
 from nbclient import NotebookClient
-from nbclient.util import ensure_async
 
 
-def run_notebook(input_path: Path, output_path: Path, kernel_name: str = "python3", timeout: int = 600):
+def run_notebook(
+    input_path: Path,
+    output_path: Path,
+    kernel_name: str = "python3",
+    timeout: int = 600,
+):
     # Garante PYTHONPATH com raiz do projeto para import de src/
     project_root = Path(__file__).resolve().parents[1]
     os.environ.setdefault("PYTHONPATH", str(project_root))
@@ -22,15 +26,18 @@ def run_notebook(input_path: Path, output_path: Path, kernel_name: str = "python
         print("[ERROR] Falha ao executar notebook:", input_path)
         # Tenta localizar a última célula executada para contexto
         for i, cell in enumerate(nb.cells):
-            exec_count = cell.get('execution_count')
+            exec_count = cell.get("execution_count")
             if exec_count is not None:
                 last_idx = i
-        if 'last_idx' in locals():
-            print(f"[ERROR] Última célula executada índice={last_idx} tipo={nb.cells[last_idx].cell_type}")
+        if "last_idx" in locals():
+            print(
+                f"[ERROR] Última célula executada índice={last_idx} tipo={nb.cells[last_idx].cell_type}"
+            )
             print("[ERROR] Conteúdo da célula:")
             print(nb.cells[last_idx].source)
         # Mensagem e traceback
         import traceback
+
         print(f"[ERROR] Tipo: {type(e).__name__}")
         print(f"[ERROR] Mensagem: {e}")
         traceback.print_exc()
@@ -41,18 +48,35 @@ def run_notebook(input_path: Path, output_path: Path, kernel_name: str = "python
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Executa um notebook Jupyter e salva a saída.")
-    parser.add_argument("input", type=str, help="Caminho do notebook de entrada (.ipynb)")
-    parser.add_argument("--output", type=str, default=None, help="Caminho de saída (.ipynb). Se omitido, usa out_<nome>.ipynb")
-    parser.add_argument("--kernel", type=str, default="python3", help="Nome do kernel Jupyter")
-    parser.add_argument("--timeout", type=int, default=600, help="Timeout por célula (segundos)")
+    parser = argparse.ArgumentParser(
+        description="Executa um notebook Jupyter e salva a saída."
+    )
+    parser.add_argument(
+        "input", type=str, help="Caminho do notebook de entrada (.ipynb)"
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Caminho de saída (.ipynb). Se omitido, usa out_<nome>.ipynb",
+    )
+    parser.add_argument(
+        "--kernel", type=str, default="python3", help="Nome do kernel Jupyter"
+    )
+    parser.add_argument(
+        "--timeout", type=int, default=600, help="Timeout por célula (segundos)"
+    )
     args = parser.parse_args()
 
     in_path = Path(args.input).resolve()
     if not in_path.exists():
         print(f"[ERROR] Arquivo não encontrado: {in_path}")
         sys.exit(1)
-    out_path = Path(args.output) if args.output else in_path.with_name(f"out_{in_path.stem}.ipynb")
+    out_path = (
+        Path(args.output)
+        if args.output
+        else in_path.with_name(f"out_{in_path.stem}.ipynb")
+    )
 
     run_notebook(in_path, out_path, kernel_name=args.kernel, timeout=args.timeout)
 

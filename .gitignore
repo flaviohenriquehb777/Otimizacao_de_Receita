@@ -40,6 +40,11 @@ Thumbs.db
 # DVC local config (keep secrets local)
 .dvc/config.local
 
+# Segredos locais (credenciais DagsHub/MLflow por projeto) — nunca versionar
+.env
+.env.*
+!.env.example
+
 # Dossiê interno (contém marca/PII real): manter apenas local.
 references/
 
