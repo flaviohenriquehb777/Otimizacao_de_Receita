@@ -116,22 +116,63 @@ negócio (tabela de preços real, mecânicas promocionais e sazonalidade), com n
 
 **Colunas principais:**
 
-| Grupo | Colunas |
-|---|---|
-| Preço | `preco_original`, `preco_final`, `desconto_pct` (0–0,6) |
-| Contexto econômico | `custo_producao`, `preco_competidor`, `indice_preco_competidor`, `gasto_marketing` |
-| Alvo | `quantidade_vendida_dia` (transacional) — `quantidade_vendida_mes` é **agregado** e tratado como vazamento |
-| Calendário / clima | `feriado_flag`, `evento_especial`, `promocao_tipo`, `mes`, `dia_semana_idx`, `temperatura`, `chuva_mm` |
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center">Grupo</th>
+      <th align="center">Colunas</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="center">Preço</td>
+      <td align="center"><code>preco_original</code>, <code>preco_final</code>, <code>desconto_pct</code> (0–0,6)</td>
+    </tr>
+    <tr>
+      <td align="center">Contexto econômico</td>
+      <td align="center"><code>custo_producao</code>, <code>preco_competidor</code>, <code>indice_preco_competidor</code>, <code>gasto_marketing</code></td>
+    </tr>
+    <tr>
+      <td align="center">Alvo</td>
+      <td align="center"><code>quantidade_vendida_dia</code> (transacional) — <code>quantidade_vendida_mes</code> é <strong>agregado</strong> e tratado como vazamento</td>
+    </tr>
+    <tr>
+      <td align="center">Calendário / clima</td>
+      <td align="center"><code>feriado_flag</code>, <code>evento_especial</code>, <code>promocao_tipo</code>, <code>mes</code>, <code>dia_semana_idx</code>, <code>temperatura</code>, <code>chuva_mm</code></td>
+    </tr>
+  </tbody>
+</table>
 
 A etapa de *Data Preparation* valida a consistência aritmética
 (`preco_final == preco_original × (1 − desconto)`), deriva features de negócio e materializa o
 **split temporal estrito**:
 
-| Split | Período | Linhas |
-|---|---|---|
-| Treino | 2024-01-01 → 2025-06-30 | 26.256 |
-| Validação | 2025-07-01 → 2025-09-30 | 4.416 |
-| Teste (Q4, pico festivo) | 2025-10-01 → 2025-12-31 | 4.416 |
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center">Split</th>
+      <th align="center">Período</th>
+      <th align="center">Linhas</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="center">Treino</td>
+      <td align="center">2024-01-01 → 2025-06-30</td>
+      <td align="center">26.256</td>
+    </tr>
+    <tr>
+      <td align="center">Validação</td>
+      <td align="center">2025-07-01 → 2025-09-30</td>
+      <td align="center">4.416</td>
+    </tr>
+    <tr>
+      <td align="center">Teste (Q4, pico festivo)</td>
+      <td align="center">2025-10-01 → 2025-12-31</td>
+      <td align="center">4.416</td>
+    </tr>
+  </tbody>
+</table>
 
 ## Metodologia de análise: CRISP-DM
 
@@ -162,12 +203,42 @@ um baseline ingênuo para calibrar a expectativa.
 
 **Candidatos avaliados** (todos com a mesma base de treino e validação):
 
-| Modelo | RMSE (val) | R² (val) | Uplift de lucro (val) |
-|---|---|---|---|
-| **RidgeCV** 🏆 | 0,7875 | 0,8853 | **+4,43%** |
-| RandomForest | 0,6415 | 0,9239 | +3,78% |
-| HistGradientBoosting | 0,6139 | 0,9303 | +1,64% |
-| XGBoostPoisson | 0,6310 | 0,9264 | +4,37% |
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center">Modelo</th>
+      <th align="center">RMSE (val)</th>
+      <th align="center">R² (val)</th>
+      <th align="center">Uplift de lucro (val)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="center"><strong>RidgeCV</strong> 🏆</td>
+      <td align="center">0,7875</td>
+      <td align="center">0,8853</td>
+      <td align="center"><strong>+4,43%</strong></td>
+    </tr>
+    <tr>
+      <td align="center">RandomForest</td>
+      <td align="center">0,6415</td>
+      <td align="center">0,9239</td>
+      <td align="center">+3,78%</td>
+    </tr>
+    <tr>
+      <td align="center">HistGradientBoosting</td>
+      <td align="center">0,6139</td>
+      <td align="center">0,9303</td>
+      <td align="center">+1,64%</td>
+    </tr>
+    <tr>
+      <td align="center">XGBoostPoisson</td>
+      <td align="center">0,6310</td>
+      <td align="center">0,9264</td>
+      <td align="center">+4,37%</td>
+    </tr>
+  </tbody>
+</table>
 
 O **RidgeCV** foi o campeão por **lucro esperado em validação** (critério de negócio), não por
 RMSE — apesar de os modelos de árvore terem menor erro preditivo, eles entregam menos uplift de
@@ -175,16 +246,48 @@ lucro na política de desconto.
 
 **Métricas no teste (Q4/2025 — pico festivo, dado nunca visto):**
 
-| Métrica | Valor |
-|---|---|
-| RMSE | 0,8439 |
-| MAE | 0,4895 (26,2% da média do alvo) |
-| R² | 0,8966 |
-| Lucro baseline (preço cheio) | R$ 156,43 |
-| Lucro da política ótima | R$ 162,12 |
-| **Uplift de lucro** | **+3,64%** |
-| Desconto médio aplicado | 5,1% |
-| Linhas com desconto > 0 | 52,9% |
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center">Métrica</th>
+      <th align="center">Valor</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="center">RMSE</td>
+      <td align="center">0,8439</td>
+    </tr>
+    <tr>
+      <td align="center">MAE</td>
+      <td align="center">0,4895 (26,2% da média do alvo)</td>
+    </tr>
+    <tr>
+      <td align="center">R²</td>
+      <td align="center">0,8966</td>
+    </tr>
+    <tr>
+      <td align="center">Lucro baseline (preço cheio)</td>
+      <td align="center">R$ 156,43</td>
+    </tr>
+    <tr>
+      <td align="center">Lucro da política ótima</td>
+      <td align="center">R$ 162,12</td>
+    </tr>
+    <tr>
+      <td align="center"><strong>Uplift de lucro</strong></td>
+      <td align="center"><strong>+3,64%</strong></td>
+    </tr>
+    <tr>
+      <td align="center">Desconto médio aplicado</td>
+      <td align="center">5,1%</td>
+    </tr>
+    <tr>
+      <td align="center">Linhas com desconto &gt; 0</td>
+      <td align="center">52,9%</td>
+    </tr>
+  </tbody>
+</table>
 
 **Feature importance** (permutation importance, top 5): `promocao_tipo` (23,6), `produto` (6,4),
 `tamanho_embalagem` (3,7), `preco_original` (3,6), `tipo_produto` (3,4).
@@ -194,17 +297,52 @@ lucro na política de desconto.
 
 ## Tecnologias utilizadas
 
-| Categoria | Tecnologias |
-|---|---|
-| Linguagem / ambiente | **Python 3.12**, **UV** (`pyproject.toml` + `uv.lock`) |
-| Dados | **Pandas**, **NumPy**, **Parquet** (PyArrow) |
-| Modelagem | **scikit-learn** (RidgeCV, Pipeline, ColumnTransformer, permutation importance), **XGBoost** (candidato Poisson) |
-| Experimentação | **MLflow** (tracking), **DagsHub** (remote de experimentos + cache DVC) |
-| Versionamento de dados | **DVC** (`dvc.yaml` + `dvc.lock`) |
-| Aplicação | **Streamlit** (app de decisão, tema Dark) |
-| Visualização | **Altair** (app), **Chart.js** (showcase), **Matplotlib**, **Seaborn** |
-| Qualidade | **Ruff**, **Black**, **pytest** (23 testes) |
-| CI/CD | **GitHub Actions** (Node 24), **GitHub Pages** |
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center">Categoria</th>
+      <th align="center">Tecnologias</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="center">Linguagem / ambiente</td>
+      <td align="center"><strong>Python 3.12</strong>, <strong>UV</strong> (<code>pyproject.toml</code> + <code>uv.lock</code>)</td>
+    </tr>
+    <tr>
+      <td align="center">Dados</td>
+      <td align="center"><strong>Pandas</strong>, <strong>NumPy</strong>, <strong>Parquet</strong> (PyArrow)</td>
+    </tr>
+    <tr>
+      <td align="center">Modelagem</td>
+      <td align="center"><strong>scikit-learn</strong> (RidgeCV, Pipeline, ColumnTransformer, permutation importance), <strong>XGBoost</strong> (candidato Poisson)</td>
+    </tr>
+    <tr>
+      <td align="center">Experimentação</td>
+      <td align="center"><strong>MLflow</strong> (tracking), <strong>DagsHub</strong> (remote de experimentos + cache DVC)</td>
+    </tr>
+    <tr>
+      <td align="center">Versionamento de dados</td>
+      <td align="center"><strong>DVC</strong> (<code>dvc.yaml</code> + <code>dvc.lock</code>)</td>
+    </tr>
+    <tr>
+      <td align="center">Aplicação</td>
+      <td align="center"><strong>Streamlit</strong> (app de decisão, tema Dark)</td>
+    </tr>
+    <tr>
+      <td align="center">Visualização</td>
+      <td align="center"><strong>Altair</strong> (app), <strong>Chart.js</strong> (showcase), <strong>Matplotlib</strong>, <strong>Seaborn</strong></td>
+    </tr>
+    <tr>
+      <td align="center">Qualidade</td>
+      <td align="center"><strong>Ruff</strong>, <strong>Black</strong>, <strong>pytest</strong> (23 testes)</td>
+    </tr>
+    <tr>
+      <td align="center">CI/CD</td>
+      <td align="center"><strong>GitHub Actions</strong> (Node 24), <strong>GitHub Pages</strong></td>
+    </tr>
+  </tbody>
+</table>
 
 ## Instalação e uso
 
